@@ -1,0 +1,73 @@
+name: Build ArkOS BSP
+
+on:
+  push:
+    branches: [rg351]
+  pull_request:
+    branches: [rg351]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git lzop build-essential gcc \
+            bc libncurses5-dev
+
+      - name: Download toolchain
+        run: |
+          wget -q https://releases.linaro.org/components/toolchain/binaries/6.3-2017.05/aarch64-linux-gnu/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu.tar.xz
+          tar Jxf gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu.tar.xz
+
+      - name: Build kernel (Image-6.6)
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH=$PWD/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/:$PATH
+          make clone_defconfig
+          make -j$(nproc)
+
+      - name: Compress Image-6.6
+        run: |
+          gzip -9 -k arch/arm64/boot/Image
+          mv arch/arm64/boot/Image.gz Image-6.6.gz
+
+      - name: Replace battery and charger drivers
+        run: |
+          cp .github/workflows/original/rk817_battery.c drivers/power/rk817_battery.c
+          cp .github/workflows/original/rk817_charger.c drivers/power/rk817_charger.c
+
+      - name: Build kernel (Image-4.4)
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH=$PWD/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/:$PATH
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- M=drivers/power clean
+          make -j$(nproc)
+
+      - name: Compress Image-4.4
+        run: |
+          gzip -9 -k arch/arm64/boot/Image
+          mv arch/arm64/boot/Image.gz Image-4.4.gz
+
+      - name: Upload Image-6.6
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-6.6
+          path: Image-6.6.gz
+          retention-days: 30
+
+      - name: Upload Image-4.4
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-4.4
+          path: Image-4.4.gz
+          retention-days: 30
