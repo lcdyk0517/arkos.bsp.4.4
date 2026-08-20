@@ -49,6 +49,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r46h-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r50s-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r50h-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rg36-linux.dtb
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rg36pro-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rx6h-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-t16max-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-u8-linux.dtb
