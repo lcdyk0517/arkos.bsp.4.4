@@ -46,6 +46,11 @@
 #define HYBRID_EMA_ALPHA_NUM		2
 #define HYBRID_EMA_ALPHA_DEN		10
 
+/* Full detection via small current at high voltage */
+#define HYBRID_FULL_CURR_THRESH_MA	150	/* current below this = near full */
+#define HYBRID_FULL_VOLT_THRESH_MV	4050	/* voltage must be above this */
+#define HYBRID_FULL_TIMEOUT_SEC		(20 * 60)	/* 20 min timeout at 99% */
+
 static int dbg_enable;
 struct rk817_battery_device;  /* 先前置声明结构体标签 */
 
@@ -412,10 +417,10 @@ static const struct reg_field rk817_battery_reg_fields[] = {
 	[HALT_CNT_REG] = REG_FIELD(0xA6, 0, 7),
 	[CALC_REST_REGL] = REG_FIELD(0xA7, 0, 7),
 	[UPDATE_LEVE_REG] = REG_FIELD(0xA8, 0, 7),
-	[V_FULL_CHG_L] = REG_FIELD(0xA4, 0, 7),
-	[V_FULL_CHG_H] = REG_FIELD(0xB1, 0, 7),
-	[V_FULL_DIS_L] = REG_FIELD(0xB2, 0, 7),
-	[V_FULL_DIS_H] = REG_FIELD(0xB3, 0, 7),
+	[V_FULL_CHG_L] = REG_FIELD(0xC6, 0, 7),
+	[V_FULL_CHG_H] = REG_FIELD(0xC7, 0, 7),
+	[V_FULL_DIS_L] = REG_FIELD(0xC8, 0, 7),
+	[V_FULL_DIS_H] = REG_FIELD(0xC9, 0, 7),
 
 	[VOL_ADC_B3] = REG_FIELD(0xA9, 0, 7),
 	[VOL_ADC_B2] = REG_FIELD(0xAA, 0, 7),
@@ -559,6 +564,7 @@ struct rk817_battery_device {
 	bool				hybrid_full_event;	/* full event active */
 	int64_t				hybrid_last_loop_sec;	/* last loop boottime */
 	bool				hybrid_first_run;	/* first iteration flag */
+	int64_t				hybrid_99_start_sec;	/* time when SOC first hit 99% */
 
 	/* Per-device state (formerly static locals) */
 	u32				save_cap_old;		/* for rk817_bat_save_cap */
@@ -920,7 +926,8 @@ static void rk817_hybrid_calculate(struct rk817_battery_device *battery)
 	 * coulomb counter should be at FCC, and voltage calibration
 	 * should be allowed to correct any residual error.
 	 */
-	bool charging = (battery->chrg_status == CC_OR_CV_CHRG);
+	bool charging = (battery->chrg_status == CC_OR_CV_CHRG ||
+			 battery->chrg_status == CHARGE_FINISH);
 	bool status_full = (battery->chrg_status == CHARGE_FINISH);
 	bool peak_dwell, full_event, allow_100;
 	int64_t now_sec;
@@ -1114,8 +1121,44 @@ static void rk817_hybrid_calculate(struct rk817_battery_device *battery)
 		battery->hybrid_internal_soc = 100;
 
 	/* Step 7: Cap at 99% during charging until full event */
-	if (charging && !allow_100 && battery->hybrid_internal_soc > 99)
-		battery->hybrid_internal_soc = 99;
+	if (charging && !allow_100 && battery->hybrid_internal_soc > 99) {
+		/*
+		 * Additional conditions to allow 100% without waiting 15 min:
+		 * 1. Current is very small (CV phase, near termination)
+		 *    AND voltage is high enough
+		 * 2. Timeout: stuck at 99% for too long with small current
+		 */
+		bool curr_small = (battery->current_avg >= 0 &&
+				   battery->current_avg < HYBRID_FULL_CURR_THRESH_MA);
+		bool volt_high = (ema_mv >= HYBRID_FULL_VOLT_THRESH_MV);
+
+		if (curr_small && volt_high) {
+			/* Current is small and voltage is high - battery is full */
+			allow_100 = true;
+			HYBRID_DBG("hybrid: allow 100%%, curr=%d v=%d\n",
+				   battery->current_avg, ema_mv);
+		} else if (curr_small && battery->hybrid_internal_soc >= 99) {
+			/* Track how long we've been at 99% with small current */
+			int64_t now = rk817_hybrid_boottime_sec();
+
+			if (battery->hybrid_99_start_sec == 0)
+				battery->hybrid_99_start_sec = now;
+
+			if ((now - battery->hybrid_99_start_sec) >= HYBRID_FULL_TIMEOUT_SEC) {
+				allow_100 = true;
+				HYBRID_DBG("hybrid: allow 100%%, timeout %llds curr=%d\n",
+					   now - battery->hybrid_99_start_sec,
+					   battery->current_avg);
+			}
+		}
+
+		if (!allow_100)
+			battery->hybrid_internal_soc = 99;
+	}
+
+	/* Reset 99% timer when not at 99% */
+	if (battery->hybrid_internal_soc < 99)
+		battery->hybrid_99_start_sec = 0;
 
 	/* Step 8: Step-limit for display */
 	battery->hybrid_visible_soc = rk817_hybrid_step_limit(
@@ -1848,7 +1891,7 @@ static int rk817_bat_get_charge_status(struct rk817_battery_device *battery)
 		 battery->voltage_avg, battery->current_avg);
 
 	if (status == CC_OR_CV_CHRG) {
-		if (battery->rsoc == MAX_PERCENTAGE) {
+		if (battery->rsoc >= 100) {
 			DBG("charge to finish\n");
 			status = CHARGE_FINISH;
 		}
@@ -3210,6 +3253,7 @@ static int rk817_battery_probe(struct platform_device *pdev)
 	battery->hybrid_full_event = false;
 	battery->hybrid_last_loop_sec = rk817_hybrid_boottime_sec();
 	battery->hybrid_first_run = true;
+	battery->hybrid_99_start_sec = 0;
 
 	/* Load learned voltage anchors from persistent storage */
 	rk817_hybrid_load_map(battery);
@@ -3362,12 +3406,10 @@ static int rk817_bat_pm_resume(struct device *dev)
 	interval_sec = rk817_bat_rtc_sleep_sec(battery);
 	battery->sleep_sum_sec += interval_sec;
 
-	/* Hybrid mode: gap detection in hybrid_calculate will
-	 * trigger voltage calibration on the first work cycle.
-	 * Reset visible_soc so the first work cycle snaps to
-	 * the current value instead of stepping +1% at a time.
+	/* Hybrid mode: resume后直接用coulomb counter的值，
+	 * 不走step-limit，避免休眠期间充满电却显示99%
 	 */
-	battery->hybrid_visible_soc = -1;
+	battery->hybrid_first_run = true;
 	BAT_INFO("resume: interval=%ds v=%d\n",
 		 interval_sec, battery->voltage_avg);
 

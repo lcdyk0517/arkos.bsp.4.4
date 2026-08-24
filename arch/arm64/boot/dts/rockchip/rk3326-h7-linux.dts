@@ -57,7 +57,7 @@
 		/* adc channel count */
 		button-adc-count = <2>;
 		/* adc calculate scale */
-		button-adc-scale = <2>;
+		button-adc-scale = <64>;
 
 		/* adc deadzone range  */
 		button-adc-deadzone = <20>;
@@ -68,6 +68,12 @@
 		*/
 		button-adc-fuzz = <32>;
 		button-adc-flat = <32>;
+
+		abs_x-p-tuning = <200>;
+		abs_x-n-tuning = <200>;
+		
+		abs_y-p-tuning = <200>;
+		abs_y-n-tuning = <200>;
 
 		/* poll device interval (ms), adc read interval */
 		poll-interval = <10>;
