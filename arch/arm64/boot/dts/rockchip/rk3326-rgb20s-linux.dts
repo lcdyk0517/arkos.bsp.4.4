@@ -277,9 +277,9 @@
 		rockchip,uboot-charge-on = <1>;
 		rockchip,android-charge-on = <0>;
 		rockchip,uboot-exit-charge-level = <0>;
-		rockchip,uboot-exit-charge-voltage = <3290>;
-		rockchip,screen-on-voltage = <3245>;
-		rockchip,uboot-low-power-voltage = <3255>;
+		rockchip,uboot-exit-charge-voltage = <3090>;
+		rockchip,screen-on-voltage = <3045>;
+		rockchip,uboot-low-power-voltage = <3055>;
 		rockchip,system-suspend = <0>;
 		rockchip,auto-off-screen-interval = <30>;
 		rockchip,auto-wakeup-interval = <0>;
@@ -678,9 +678,9 @@
 		battery {
 			compatible = "rk817,battery", "rk817_fg";
 			ocv_table = <
-			3300 3340 3380 3420 3460 3500 3540
-			3570 3610 3650 3690 3720 3750 3790
-			3830 3870 3910 3940 3967 4001 4046
+			3165 3220 3280 3330 3380 3430 3480
+			3530 3580 3630 3670 3710 3750 3790
+			3830 3870 3910 3950 3990 4020 4045
 			>;
 			design_capacity = <3380>;
 			design_qmax = <3718>;
@@ -688,7 +688,7 @@
 			sleep_enter_current = <300>;
 			sleep_exit_current = <300>;
 			sleep_filter_current = <100>;
-			power_off_thresd = <3300>;
+			power_off_thresd = <3000>;
 			zero_algorithm_vol = <3850>;
 			max_soc_offset = <60>;
 			monitor_sec = <5>;
