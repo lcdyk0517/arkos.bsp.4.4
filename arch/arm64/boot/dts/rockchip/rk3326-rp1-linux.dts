@@ -322,22 +322,23 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing1: origin {
-				clock-frequency = <0x1d2eb40>;
-				hactive = <0x280>;
-				vactive = <0x1e0>;
-				hfront-porch = <0x78>;
-				hsync-len = <0x78>;
-				hback-porch = <0x78>;
-				vfront-porch = <0x0d>;
-				vsync-len = <0x05>;
-				vback-porch = <0x11>;
-				hsync-active = <0x00>;
-				vsync-active = <0x00>;
-				de-active = <0x00>;
-				pixelclk-active = <0x00>;
+			// 30.60MHz / (640+120+120+120)×(480+13+5+17) = 1000×515 = 59.42 Hz
+			timing0: original {
+				clock-frequency = <30600000>;
+				hactive = <640>;
+				vactive = <480>;
+				hfront-porch = <120>;
+				hsync-len = <120>;
+				hback-porch = <120>;
+				vfront-porch = <13>;
+				vsync-len = <5>;
+				vback-porch = <17>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
 			};
 		};
 	};
@@ -898,17 +899,17 @@
 			<1 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>,
 			<1 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>,
 			<1 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>,
-			<1 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
 			<1 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA0 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>,
 			<2 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PA0 RK_FUNC_GPIO &pcfg_pull_up>;
+			<2 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 };

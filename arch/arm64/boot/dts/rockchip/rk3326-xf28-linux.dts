@@ -346,13 +346,14 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing0: adjust {
+			// 23.00MHz / (480+46+2+44)×(640+16+2+14) = 572×672 = 59.84 Hz
+			timing0: original {
 				clock-frequency = <23000000>;
 				hactive = <480>;
 				vactive = <640>;
-				hfront-porch = <44>;
+				hfront-porch = <46>;
 				hsync-len = <2>;
 				hback-porch = <44>;
 				vfront-porch = <16>;
@@ -363,12 +364,13 @@
 				de-active = <0>;
 				pixelclk-active = <0>;
 			};
-
-			timing1: origin {
+			
+			// 23.00MHz / (480+44+2+44)×(640+16+2+14) = 570×672 = 60.05 Hz
+			timing1: adjust {
 				clock-frequency = <23000000>;
 				hactive = <480>;
 				vactive = <640>;
-				hfront-porch = <46>;
+				hfront-porch = <44>;
 				hsync-len = <2>;
 				hback-porch = <44>;
 				vfront-porch = <16>;
@@ -624,7 +626,7 @@
 				regulator-boot-on;
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <3300000>;
-
+				
 				regulator-name = "vcc2v8_dvp";
 				regulator-state-mem {
 					regulator-on-in-suspend;

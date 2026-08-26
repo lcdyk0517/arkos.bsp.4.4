@@ -46,7 +46,7 @@
 	
 	joypad: odroidgo3-joypad {
 		compatible = "odroidgo3-joypad";
-
+		
 		joypad-name = "GO-Super Gamepad";
 		joypad-product = <0x1100>;
 		joypad-revision = <0x0100>;
@@ -237,7 +237,7 @@
 		248 249 250 251 252 253 254 255>;
 		default-brightness-level = <200>;
 	};
-
+	
 	leds: arkos4clone-leds {
 		compatible = "arkos4clone-led";
 		
@@ -300,7 +300,7 @@
 		regulator-always-on;
 		vin-supply = <&vccsys>;
 	};
-
+	
 	charge-animation {
 		compatible = "rockchip,uboot-charge";
 		status = "okay";
@@ -378,25 +378,10 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing0: adjust {
-				clock-frequency = <50000000>;
-				hactive = <720>;
-				vactive = <720>;
-				hfront-porch = <143>;
-				hsync-len    = <80>;
-				hback-porch  = <142>;
-				vfront-porch = <22>;
-				vsync-len    = <4>;
-				vback-porch  = <22>;
-				hsync-active = <0>;
-				vsync-active = <0>;
-				de-active = <0>;
-				pixelclk-active = <0>;
-			};
-
-			timing1: origin {
+			// 50.00MHz / (720+140+80+140)×(720+20+4+20) = 1080×764 = 60.60 Hz
+			timing0: original {
 				clock-frequency = <50000000>;
 				hactive = <720>;
 				vactive = <720>;
@@ -406,6 +391,23 @@
 				vfront-porch = <20>;
 				vsync-len = <4>;
 				vback-porch = <20>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+			
+			// 50.00MHz / (720+143+80+142)×(720+22+4+22) = 1085×768 = 60.00 Hz
+			timing1: adjust {
+				clock-frequency = <50000000>;
+				hactive = <720>;
+				vactive = <720>;
+				hfront-porch = <143>;
+				hsync-len    = <80>;
+				hback-porch  = <142>;
+				vfront-porch = <22>;
+				vsync-len    = <4>;
+				vback-porch  = <22>;
 				hsync-active = <0>;
 				vsync-active = <0>;
 				de-active = <0>;
@@ -656,7 +658,7 @@
 				regulator-boot-on;
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <3300000>;
-
+				
 				regulator-name = "vcc2v8_dvp";
 				regulator-state-mem {
 					regulator-on-in-suspend;

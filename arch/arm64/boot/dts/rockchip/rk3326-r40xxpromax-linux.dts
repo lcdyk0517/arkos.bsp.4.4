@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2026 kk&lcdyk
+*
+* GameConsole R40XX ProMax
+*
+*/
+
+/dts-v1/;
+#include "rk3326-r46h-linux.dts"
+
+/ {
+	model = "GameConsole R40XX ProMax";
+	compatible = "rockchip,rk3326-r40xxpromax-linux", "rockchip,rk3326";
+};

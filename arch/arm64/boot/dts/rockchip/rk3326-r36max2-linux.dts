@@ -377,25 +377,10 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing0: adjust {
-				clock-frequency = <62000000>;
-				hactive = <1024>;
-				vactive = <768>;
-				hfront-porch = <90>;
-				hsync-len = <80>;
-				hback-porch = <80>;
-				vfront-porch = <16>;
-				vsync-len = <8>;
-				vback-porch = <19>;
-				hsync-active = <0>;
-				vsync-active = <0>;
-				de-active = <0>;
-				pixelclk-active = <0>;
-			};
-			
-			timing1: origin {
+			// 62.00MHz / (1024+90+80+80)×(768+16+8+8) = 1274×800 = 60.83 Hz
+			timing0: original {
 				clock-frequency = <62000000>;
 				hactive = <1024>;
 				vactive = <768>;
@@ -405,6 +390,23 @@
 				vfront-porch = <16>;
 				vsync-len = <8>;
 				vback-porch = <8>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+			
+			// 62.00MHz / (1024+90+80+80)×(768+16+8+19) = 1274×811 = 60.01 Hz
+			timing1: adjust {
+				clock-frequency = <62000000>;
+				hactive = <1024>;
+				vactive = <768>;
+				hfront-porch = <90>;
+				hsync-len = <80>;
+				hback-porch = <80>;
+				vfront-porch = <16>;
+				vsync-len = <8>;
+				vback-porch = <19>;
 				hsync-active = <0>;
 				vsync-active = <0>;
 				de-active = <0>;

@@ -386,9 +386,10 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing1: origin {
+			// 64.00MHz / (720+40+10+40)×(1280+16+4+12) = 810×1312 = 60.22 Hz
+			timing0: original {
 				clock-frequency = <64000000>;
 				hactive = <720>;
 				vactive = <1280>;
@@ -1001,8 +1002,6 @@
 			<3 RK_PC2 RK_FUNC_GPIO &pcfg_pull_up>,
 			<2 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>,
 			<2 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
-			<2 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
-			<3 RK_PD2 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>,
 			<3 RK_PD0 RK_FUNC_GPIO &pcfg_pull_up>,

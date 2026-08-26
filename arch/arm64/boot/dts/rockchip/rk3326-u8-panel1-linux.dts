@@ -46,7 +46,7 @@
 	
 	joypad: odroidgo3-joypad {
 		compatible = "odroidgo3-joypad";
-
+		
 		joypad-name = "GO-Super Gamepad";
 		joypad-product = <0x1100>;
 		joypad-revision = <0x0100>;
@@ -365,25 +365,10 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing0: adjust {
-				clock-frequency = <30000000>;
-				hactive = <480>;
-				vactive = <800>;
-				hfront-porch = <32>;
-				hsync-len = <6>;
-				hback-porch = <32>;
-				vfront-porch = <10>;
-				vsync-len = <4>;
-				vback-porch = <95>;
-				hsync-active = <0>;
-				vsync-active = <0>;
-				de-active = <0>;
-				pixelclk-active = <0>;
-			};
-
-			timing1: origin {
+			// 30.00MHz / (480+32+6+32)×(800+10+4+12) = 550×826 = 66.04 Hz
+			timing0: original {
 				clock-frequency = <30000000>;
 				hactive = <480>;
 				vactive = <800>;
@@ -393,6 +378,23 @@
 				vfront-porch = <10>;
 				vsync-len = <4>;
 				vback-porch = <12>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+			
+			// 30.00MHz / (480+32+6+32)×(800+10+4+95) = 550×909 = 60.01 Hz
+			timing1: adjust {
+				clock-frequency = <30000000>;
+				hactive = <480>;
+				vactive = <800>;
+				hfront-porch = <32>;
+				hsync-len = <6>;
+				hback-porch = <32>;
+				vfront-porch = <10>;
+				vsync-len = <4>;
+				vback-porch = <95>;
 				hsync-active = <0>;
 				vsync-active = <0>;
 				de-active = <0>;
@@ -643,7 +645,7 @@
 				regulator-boot-on;
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <3300000>;
-
+				
 				regulator-name = "vcc2v8_dvp";
 				regulator-state-mem {
 					regulator-on-in-suspend;

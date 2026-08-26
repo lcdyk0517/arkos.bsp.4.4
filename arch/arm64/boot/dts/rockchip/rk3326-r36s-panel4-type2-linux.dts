@@ -2,7 +2,7 @@
 /*
 * Copyright (c) 2026 kk&lcdyk
 *
-* Anbernic RG351V
+* GameConsole R36S
 *
 */
 
@@ -16,8 +16,8 @@
 #include "rk3326-linux.dtsi"
 
 / {
-	model = "Anbernic RG351V";
-	compatible = "rockchip,rk3326-rg351v-linux", "rockchip,rk3326";
+	model = "GameConsole R36S";
+	compatible = "rockchip,rk3326-r36s-linux", "rockchip,rk3326";
 	
 	chosen {
 		bootargs = "";
@@ -28,122 +28,160 @@
 		autorepeat;
 		
 		button_vol_up: button-vol-up {
+			gpios = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
 			label = "GPIO BTN-VOLUP";
 			linux,code = <KEY_VOLUMEUP>;
-			gpios = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
 		};
+		
 		button_vol_down: button-vol-down {
+			gpios = <&gpio2 RK_PA1 GPIO_ACTIVE_LOW>;
 			label = "GPIO BTN-VOLDN";
 			linux,code = <KEY_VOLUMEDOWN>;
-			gpios = <&gpio2 RK_PA1 GPIO_ACTIVE_LOW>;
 		};
 	};
-
+	
 	joypad: odroidgo3-joypad {
-		compatible = "odroidgo3-hid-joypad";
-		pwms = <&pwm0 0 200000000 0>;
-		pwm-names = "enable";
-		rumble-boost-weak = <0x0000>;
-		rumble-boost-strong = <0x0000>;
+		compatible = "odroidgo3-joypad";
 		joypad-name = "GO-Super Gamepad";
 		joypad-product = <0x1100>;
 		joypad-revision = <0x0100>;
 		status = "okay";
+		
+		/* gpio pincontrol setup */
 		pinctrl-names = "default";
-		pinctrl-0 = <&pwm0_pin>;
-
-		/* Analog Stick data tuning value (percent) */
-		abs_x-p-tuning = <200>;
-		abs_x-n-tuning = <200>;
-		abs_y-p-tuning = <200>;
-		abs_y-n-tuning = <200>;
-		abs_rx-p-tuning = <200>;
-		abs_rx-n-tuning = <200>;
-		abs_ry-p-tuning = <200>;
-		abs_ry-n-tuning = <200>;
-
+		pinctrl-0 = <&btn_pins>;
+		/* Analog mux define */
+		io-channel-names = "amux_adc";
+		io-channels = <&saradc 1>;
+		
+		/* adc mux channel count */
+		amux-count = <4>;
+		/* adc mux select(a,b) gpio */
+		amux-a-gpios = <&gpio3 RK_PB3 GPIO_ACTIVE_LOW>;
+		amux-b-gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
+		/* adc mux enable gpio */
+		amux-en-gpios = <&gpio3 RK_PB5 GPIO_ACTIVE_LOW>;
+		
 		/* adc calculate scale */
 		button-adc-scale = <2>;
-
-		/* adc deadzone range */
+		
+		/* adc deadzone range  */
 		button-adc-deadzone = <64>;
-
+		
+		/*
+		specifies fuzz value that is used to filter noise from
+		the event stream.
+		*/
 		button-adc-fuzz = <32>;
 		button-adc-flat = <32>;
-
-		/* required for RG351P */
+		
+		/*
+		Analog Stick data tuning value(precent)
+		p = positive direction, n = negative direction
+		report value = (real_adc_data * tuning_value) / 100
+		*/
+		abs_x-p-tuning = <200>;
+		abs_x-n-tuning = <200>;
+		
+		abs_y-p-tuning = <200>;
+		abs_y-n-tuning = <200>;
+		
+		abs_rx-p-tuning = <200>;
+		abs_rx-n-tuning = <200>;
+		
+		abs_ry-p-tuning = <200>;
+		abs_ry-n-tuning = <200>;
+		
+		/* poll device interval (ms), adc read interval */
+		poll-interval = <10>;
+		
+		/* required for RG351MP */
 		invert-absx;
 		invert-absy;
-
-		/* 可选：描述设备没有右摇杆 */
-		skip-absr;
-		stick-switch-key = <BTN_TRIGGER_HAPPY5>;
-
-		/* HID button bit → evdev code mapping */
 		sw1 {
-			label = "BTN-A";
-			linux,code = <BTN_EAST>;
-			hid-bit = <0>;
+			gpios = <&gpio1 RK_PB4 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-UP";
+			linux,code = <BTN_DPAD_UP>;
 		};
 		sw2 {
-			label = "BTN-B";
-			linux,code = <BTN_SOUTH>;
-			hid-bit = <1>;
+			gpios = <&gpio1 RK_PB5 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-DOWN";
+			linux,code = <BTN_DPAD_DOWN>;
 		};
 		sw3 {
-			label = "BTN-X";
-			linux,code = <BTN_NORTH>;
-			hid-bit = <2>;
+			gpios = <&gpio1 RK_PB6 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-LEFT";
+			linux,code = <BTN_DPAD_LEFT>;
 		};
 		sw4 {
-			label = "BTN-Y";
-			linux,code = <BTN_WEST>;
-			hid-bit = <3>;
+			gpios = <&gpio1 RK_PB7 GPIO_ACTIVE_LOW>;
+			label = "GPIO DPAD-RIGHT";
+			linux,code = <BTN_DPAD_RIGHT>;
 		};
 		sw5 {
-			label = "BTN-L1";
-			linux,code = <BTN_TL>;
-			hid-bit = <4>;
+			gpios = <&gpio1 RK_PA2 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-A";
+			linux,code = <BTN_EAST>;
 		};
 		sw6 {
-			label = "BTN-R1";
-			linux,code = <BTN_TR>;
-			hid-bit = <5>;
+			gpios = <&gpio1 RK_PA5 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-B";
+			linux,code = <BTN_SOUTH>;
 		};
 		sw7 {
-			label = "BTN-START";
-			linux,code = <BTN_TRIGGER_HAPPY2>;
-			hid-bit = <6>;
+			gpios = <&gpio1 RK_PA6 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-Y";
+			linux,code = <BTN_WEST>;
 		};
 		sw8 {
-			label = "BTN-SELECT";
-			linux,code = <BTN_TRIGGER_HAPPY1>;
-			hid-bit = <7>;
-		};
-		sw9 {
-			label = "BTN-L3";
-			linux,code = <BTN_TRIGGER_HAPPY3>;
-			hid-bit = <8>;
-		};
-		sw10 {
-			label = "BTN-R3";
-			linux,code = <BTN_TRIGGER_HAPPY4>;
-			hid-bit = <12>; //占位用
+			gpios = <&gpio1 RK_PA7 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN-X";
+			linux,code = <BTN_NORTH>;
 		};
 		sw11 {
-			label = "BTN-L2";
-			linux,code = <BTN_TL2>;
-			hid-bit = <10>;
+			gpios = <&gpio2 RK_PA2 GPIO_ACTIVE_LOW>;
+			label = "BTN_THUMBR";
+			linux,code = <BTN_TRIGGER_HAPPY3>;
 		};
 		sw12 {
-			label = "BTN-R2";
-			linux,code = <BTN_TR2>;
-			hid-bit = <11>;
+			gpios = <&gpio2 RK_PA3 GPIO_ACTIVE_LOW>;
+			label = "BTN_THUMBL";
+			linux,code = <BTN_TRIGGER_HAPPY4>;
 		};
 		sw13 {
-			label = "BTN-FN";
+			gpios = <&gpio2 RK_PA4 GPIO_ACTIVE_LOW>;
+			label = "GPIO F5";
 			linux,code = <BTN_TRIGGER_HAPPY5>;
-			hid-bit = <9>;
+		};
+		sw15 {
+			gpios = <&gpio2 RK_PA6 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_TL";
+			linux,code = <BTN_TL>;
+		};
+		sw16 {
+			gpios = <&gpio2 RK_PA7 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_TR";
+			linux,code = <BTN_TR>;
+		};
+		sw19 {
+			gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>;
+			label = "BTN_SELECT";
+			linux,code = <BTN_TRIGGER_HAPPY1>;
+		};
+		sw20 {
+			gpios = <&gpio3 RK_PB7 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_TR2";
+			linux,code = <BTN_TR2>;
+		};
+		sw21 {
+			gpios = <&gpio3 RK_PB2 GPIO_ACTIVE_LOW>;
+			label = "GPIO BTN_TL2";
+			linux,code = <BTN_TL2>;
+		};
+		sw22 {
+			gpios = <&gpio3 RK_PB4 GPIO_ACTIVE_LOW>;
+			label = "BTN_START";
+			linux,code = <BTN_TRIGGER_HAPPY2>;
 		};
 	};
 	
@@ -160,9 +198,17 @@
 		status = "okay";
 	};
 	
+	leds: arkos4clone-leds {
+		compatible = "arkos4clone-led";
+		
+		led-gpio = <&gpio2 RK_PB5 GPIO_ACTIVE_HIGH>;
+		led-high-color = "red";
+		led-low-color = "blue";
+	};
+	
 	backlight: backlight {
 		compatible = "pwm-backlight";
-		pwms = <&pwm1 0 25000 0>;
+		pwms = <&pwm1 0 62745 0>;
 		brightness-levels = <
 		0   1   2   3   4   5   6   7
 		8   9  10  11  12  13  14  15
@@ -184,27 +230,8 @@
 		136 137 138 139 140 141 142 143
 		144 145 146 147 148 149 150 151
 		152 153 154 155 156 157 158 159
-		160 161 162 163 164 165 166 167
-		168 169 170 171 172 173 174 175
-		176 177 178 179 180 181 182 183
-		184 185 186 187 188 189 190 191
-		192 193 194 195 196 197 198 199
-		200 201 202 203 204 205 206 207
-		208 209 210 211 212 213 214 215
-		216 217 218 219 220 221 222 223
-		224 225 226 227 228 229 230 231
-		232 233 234 235 236 237 238 239
-		240 241 242 243 244 245 246 247
-		248 249 250 251 252 253 254 255>;
-		default-brightness-level = <200>;
-	};
-
-	leds: arkos4clone-leds {
-		compatible = "arkos4clone-led";
-		
-		led-gpio = <&gpio2 RK_PB5 GPIO_ACTIVE_HIGH>;
-		led-high-color = "red";
-		led-low-color = "blue";
+		160>;
+		default-brightness-level = <51>;
 	};
 	
 	rk817-sound {
@@ -220,7 +247,7 @@
 		/*"IN1P", "Mic Jack",*/
 		"Headphone Jack", "HPOL",
 		"Headphone Jack", "HPOR";
-		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_HIGH>;
+		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
 		simple-audio-card,codec-hp-det = <1>;
 		simple-audio-card,cpu {
 			sound-dai = <&i2s1_2ch>;
@@ -236,6 +263,15 @@
 		regulator-always-on;
 		regulator-min-microvolt = <3800000>;
 		regulator-max-microvolt = <3800000>;
+	};
+	
+	vcc_host: vcc_host {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc-host";
+		gpio = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-always-on;
+		vin-supply = <&vccsys>;
 	};
 	
 	charge-animation {
@@ -285,55 +321,67 @@
 	panel@0 {
 		compatible = "simple-panel-dsi";
 		reg = <0>;
-		
 		/* pwm1 backlight */
 		backlight = <&backlight>;
 		/* RK817 LDO7 */
 		backlight-supply = <&vcc_backlight>;
 		/* RK817 LDO8 */
 		power-supply = <&vcc_lcd>;
-		
 		/* Rev 0.2 LCD reset gpio GPIO3.C0 */
 		reset-gpios = <&gpio3 RK_PC0 GPIO_ACTIVE_LOW>;
-		
 		prepare-delay-ms = <2>;
 		reset-delay-ms = <1>;
 		init-delay-ms = <20>;
 		enable-delay-ms = <120>;
 		disable-delay-ms = <50>;
 		unprepare-delay-ms = <20>;
-		
-		/* LCD size */
 		width-mm = <52>;
 		height-mm = <70>;
-		
-		dsi,flags = <(MIPI_DSI_MODE_VIDEO           |
-		MIPI_DSI_MODE_VIDEO_BURST     |
-		MIPI_DSI_MODE_LPM             |
+		dsi,flags  = <(MIPI_DSI_MODE_VIDEO |
+		MIPI_DSI_MODE_VIDEO_BURST |
+		MIPI_DSI_MODE_LPM |
 		MIPI_DSI_MODE_EOT_PACKET)>;
-		
 		dsi,format = <MIPI_DSI_FMT_RGB888>;
 		dsi,lanes = <4>;
-		panel-init-sequence = [15 00 02 FF 30 15 00 02 FF 52 15 00 02 FF 01 15 00 02 E3 00 15 00 02 40 0A 15 00 02 03 40 15 00 02 04 00 15 00 02 05 03 15 00 02 24 12 15 00 02 25 1E 15 00 02 26 28 15 00 02 27 52 15 00 02 28 57 15 00 02 29 01 15 00 02 2A DF 15 00 02 38 9C 15 00 02 39 A7 15 00 02 3A 53 15 00 02 44 00 15 00 02 49 3C 15 00 02 59 FE 15 00 02 5C 00 15 00 02 91 77 15 00 02 92 77 15 00 02 A0 55 15 00 02 A1 50 15 00 02 A4 9C 15 00 02 A7 02 15 00 02 A8 01 15 00 02 A9 01 15 00 02 AA FC 15 00 02 AB 28 15 00 02 AC 06 15 00 02 AD 06 15 00 02 AE 06 15 00 02 AF 03 15 00 02 B0 08 15 00 02 B1 26 15 00 02 B2 28 15 00 02 B3 28 15 00 02 B4 33 15 00 02 B5 08 15 00 02 B6 26 15 00 02 B7 08 15 00 02 B8 26 15 00 02 FF 30 15 00 02 FF 52 15 00 02 FF 02 15 00 02 B0 0B 15 00 02 B1 16 15 00 02 B2 17 15 00 02 B3 2C 15 00 02 B4 32 15 00 02 B5 3B 15 00 02 B6 29 15 00 02 B7 40 15 00 02 B8 0D 15 00 02 B9 05 15 00 02 BA 12 15 00 02 BB 10 15 00 02 BC 12 15 00 02 BD 15 15 00 02 BE 19 15 00 02 BF 0E 15 00 02 C0 16 15 00 02 C1 0A 15 00 02 D0 0C 15 00 02 D1 17 15 00 02 D2 14 15 00 02 D3 2E 15 00 02 D4 32 15 00 02 D5 3C 15 00 02 D6 22 15 00 02 D7 3D 15 00 02 D8 0D 15 00 02 D9 07 15 00 02 DA 13 15 00 02 DB 13 15 00 02 DC 11 15 00 02 DD 15 15 00 02 DE 19 15 00 02 DF 10 15 00 02 E0 17 15 00 02 E1 0A 15 00 02 FF 30 15 00 02 FF 52 15 00 02 FF 03 15 00 02 00 2A 15 00 02 01 2A 15 00 02 02 2A 15 00 02 03 2A 15 00 02 04 61 15 00 02 05 80 15 00 02 06 C7 15 00 02 07 01 15 00 02 08 82 15 00 02 09 83 15 00 02 30 2A 15 00 02 31 2A 15 00 02 32 2A 15 00 02 33 2A 15 00 02 34 61 15 00 02 35 C5 15 00 02 36 80 15 00 02 37 23 15 00 02 40 82 15 00 02 41 83 15 00 02 42 80 15 00 02 43 81 15 00 02 44 11 15 00 02 45 E6 15 00 02 46 E5 15 00 02 47 11 15 00 02 48 E8 15 00 02 49 E7 15 00 02 50 02 15 00 02 51 01 15 00 02 52 04 15 00 02 53 03 15 00 02 54 11 15 00 02 55 EA 15 00 02 56 E9 15 00 02 57 11 15 00 02 58 EC 15 00 02 59 EB 15 00 02 7E 02 15 00 02 7F 80 15 00 02 E0 5A 15 00 02 B1 00 15 00 02 B4 0E 15 00 02 B5 0F 15 00 02 B6 04 15 00 02 B7 07 15 00 02 B8 06 15 00 02 B9 05 15 00 02 BA 0F 15 00 02 C7 00 15 00 02 CA 0E 15 00 02 CB 0F 15 00 02 CC 04 15 00 02 CD 07 15 00 02 CE 06 15 00 02 CF 05 15 00 02 D0 0F 15 00 02 81 0F 15 00 02 84 0E 15 00 02 85 0F 15 00 02 86 07 15 00 02 87 04 15 00 02 88 05 15 00 02 89 06 15 00 02 8A 00 15 00 02 97 0F 15 00 02 9A 0E 15 00 02 9B 0F 15 00 02 9C 07 15 00 02 9D 04 15 00 02 9E 05 15 00 02 9F 06 15 00 02 A0 00 15 00 02 FF 30 15 00 02 FF 52 15 00 02 FF 02 15 00 02 01 01 15 00 02 02 DA 15 00 02 03 BA 15 00 02 04 A8 15 00 02 05 9A 15 00 02 06 70 15 00 02 07 FF 15 00 02 08 91 15 00 02 09 90 15 00 02 0A FF 15 00 02 0B 8F 15 00 02 0C 60 15 00 02 0D 58 15 00 02 0E 48 15 00 02 0F 38 15 00 02 10 2B 15 00 02 FF 30 15 00 02 FF 52 15 00 02 FF 00 15 00 02 36 02 15 00 02 3A 70 05 C8 01 11 05 0A 01 29];
-		panel-exit-sequence = [05 14 01 28 05 0A 01 10];
+		panel-init-sequence = [15 00 02 ff 30 15 00 02 ff 52 15 00 02 ff 01 15 00 02 e3 00 15 00 02 25 10 15 00 02 28 6f 15 00 02 29 01 15 00 02 2a df 15 00 02 2c 22 15 00 02 c3 0f 15 00 02 37 9c 15 00 02 38 a7 15 00 02 39 41 15 00 02 80 20 15 00 02 91 67 15 00 02 92 67 15 00 02 a0 55 15 00 02 a1 50 15 00 02 a3 58 15 00 02 a4 9c 15 00 02 a7 02 15 00 02 a8 01 15 00 02 a9 21 15 00 02 aa fc 15 00 02 ab 28 15 00 02 ac 06 15 00 02 ad 06 15 00 02 ae 06 15 00 02 af 03 15 00 02 b0 08 15 00 02 b1 26 15 00 02 b2 28 15 00 02 b3 28 15 00 02 b4 03 15 00 02 b5 08 15 00 02 b6 26 15 00 02 b7 08 15 00 02 b8 26 15 00 02 2c 22 15 00 02 5c 40 15 00 02 c0 00 15 00 02 c1 00 15 00 02 c2 00 15 00 02 ff 30 15 00 02 ff 52 15 00 02 ff 02 15 00 02 b0 02 15 00 02 d0 02 15 00 02 b1 0f 15 00 02 d1 10 15 00 02 b2 11 15 00 02 d2 12 15 00 02 b3 32 15 00 02 d3 33 15 00 02 b4 36 15 00 02 d4 36 15 00 02 b5 3c 15 00 02 d5 3c 15 00 02 b6 20 15 00 02 d6 20 15 00 02 b7 3e 15 00 02 d7 3e 15 00 02 b8 0e 15 00 02 d8 0d 15 00 02 b9 05 15 00 02 d9 05 15 00 02 ba 11 15 00 02 da 12 15 00 02 bb 11 15 00 02 db 11 15 00 02 bc 13 15 00 02 dc 14 15 00 02 bd 14 15 00 02 dd 14 15 00 02 be 16 15 00 02 de 18 15 00 02 bf 0e 15 00 02 df 0f 15 00 02 c0 17 15 00 02 e0 17 15 00 02 c1 07 15 00 02 e1 08 15 00 02 ff 30 15 00 02 ff 52 15 00 02 ff 03 15 00 02 08 8a 15 00 02 09 8b 15 00 02 30 00 15 00 02 31 00 15 00 02 32 00 15 00 02 33 00 15 00 02 34 61 15 00 02 35 d4 15 00 02 36 24 15 00 02 37 03 15 00 02 40 86 15 00 02 41 87 15 00 02 42 84 15 00 02 43 85 15 00 02 44 11 15 00 02 45 de 15 00 02 46 dd 15 00 02 47 11 15 00 02 48 e0 15 00 02 49 df 15 00 02 50 82 15 00 02 51 83 15 00 02 52 80 15 00 02 53 81 15 00 02 54 11 15 00 02 55 e2 15 00 02 56 e1 15 00 02 57 11 15 00 02 58 e4 15 00 02 59 e3 15 00 02 82 0f 15 00 02 83 0f 15 00 02 84 00 15 00 02 85 0f 15 00 02 86 0f 15 00 02 87 0e 15 00 02 88 0e 15 00 02 89 06 15 00 02 8a 06 15 00 02 8b 07 15 00 02 8c 07 15 00 02 8d 04 15 00 02 8e 04 15 00 02 8f 05 15 00 02 90 05 15 00 02 98 0f 15 00 02 99 0f 15 00 02 9a 00 15 00 02 9b 0f 15 00 02 9c 0f 15 00 02 9d 0e 15 00 02 9e 0e 15 00 02 9f 06 15 00 02 a0 06 15 00 02 a1 07 15 00 02 a2 07 15 00 02 a3 04 15 00 02 a4 04 15 00 02 a5 05 15 00 02 a6 05 15 00 02 e0 02 15 00 02 e1 52 15 00 02 ff 30 15 00 02 ff 52 15 00 02 ff 00 15 00 02 36 02 05 c8 01 11 05 14 01 29];
+		panel-exit-sequence = <0x5140128 0x50a0110>;
+		
 		
 		display-timings {
 			native-mode = <&timing0>;
 			
+			// 58.00MHz / (640+300+200+300)×(480+17+5+13) = 1440×515 = 78.21 Hz
 			timing0: original {
-				clock-frequency = <25500000>;
+				clock-frequency = <58000000>;
 				hactive = <640>;
 				vactive = <480>;
-				hfront-porch = <104>;
-				hsync-len = <2>;
-				hback-porch = <104>;
-				vfront-porch = <13>;
-				vsync-len = <2>;
-				vback-porch = <5>;
+				hfront-porch = <300>;
+				hsync-len = <200>;
+				hback-porch = <300>;
+				vfront-porch = <17>;
+				vsync-len = <5>;
+				vback-porch = <13>;
 				hsync-active = <0>;
 				vsync-active = <0>;
 				de-active = <0>;
-				pixelclk-active = <0>;
+				pixelclk-active = <1>;
+			};
+			
+			// 29.00MHz / (640+46+2+44)×(480+165+2+14) = 732×661 = 59.94 Hz
+			timing1: adjust {
+				clock-frequency = <29000000>;
+				hactive = <640>;
+				vactive = <480>;
+				hfront-porch = <46>;
+				hsync-len = <2>;
+				hback-porch = <44>;
+				vfront-porch = <165>;
+				vsync-len = <2>;
+				vback-porch = <14>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <1>;
 			};
 		};
 	};
@@ -343,7 +391,10 @@
 	status = "okay";
 };
 
-
+&route_dsi {
+	connect = <&vopb_out_dsi>;
+	status = "okay";
+};
 
 &dfi {
 	status = "okay";
@@ -357,6 +408,10 @@
 
 
 &emmc {
+	status = "disabled";
+};
+
+&sfc {
 	status = "disabled";
 };
 
@@ -577,10 +632,10 @@
 			
 			vcc_sd: LDO_REG6 {
 				regulator-min-microvolt = <1800000>;
-				regulator-max-microvolt = <3000000>;
+				regulator-max-microvolt = <3300000>;
 				regulator-boot-on;
 				uboot_mode;
-				regulator-uboot-min-microvolt = <3300000>;
+				regulator-uboot-min-microvolt = <1800000>;
 				regulator-uboot-max-microvolt = <3300000>;
 				
 				regulator-name = "vcc_sd";
@@ -611,20 +666,6 @@
 				regulator-state-mem {
 					regulator-off-in-suspend;
 					regulator-suspend-microvolt = <2800000>;
-				};
-			};
-			
-			/* Rev 1.1 WIFI Power */
-			vcc_wifi: LDO_REG9 {
-				regulator-always-on;
-				regulator-boot-on;
-				regulator-min-microvolt = <3300000>;
-				regulator-max-microvolt = <3300000>;
-				
-				regulator-name = "vcc_wifi";
-				regulator-state-mem {
-					regulator-off-in-suspend;
-					regulator-suspend-microvolt = <3300000>;
 				};
 			};
 			
@@ -688,6 +729,7 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&i2s1_2ch_mclk>;
 			spk-mute-delay-ms = <50>;
+			use-ext-amplifier;
 			hp-volume = <20>;
 			spk-volume = <3>;
 			volume-min-db = <72>;  /* -90*0.5 = -45 */
@@ -739,6 +781,14 @@
 	status = "okay";
 };
 
+&rkisp1 {
+	status = "okay";
+};
+
+&spi0 {
+	status = "disabled";
+};
+
 &pmu_io_domains {
 	/* PMU GRF Register Voltage select control */
 	status = "okay";
@@ -749,22 +799,8 @@
 	pmuio2-supply = <&vcc3v3_pmu>;
 };
 
-/* RG351V Motor PWM */
-&pwm0 {
-	status = "okay";
-};
-
 /* LCD Backlight PWM */
 &pwm1 {
-	status = "okay";
-};
-
-&route_dsi {
-	connect = <&vopb_out_dsi>;
-	status = "okay";
-};
-
-&rkisp1 {
 	status = "okay";
 };
 
@@ -775,16 +811,6 @@
 &rockchip_suspend {
 	status = "okay";
 	rockchip,sleep-debug-en = <1>;
-};
-
-
-&sfc {
-	status = "disabled";
-};
-
-
-&spi0 {
-	status = "disabled";
 };
 
 &saradc {
@@ -816,7 +842,7 @@
 	supports-sd;
 	card-detect-delay = <800>;
 	ignore-pm-notify;
-	cd-gpios = <&gpio3 RK_PB4 GPIO_ACTIVE_LOW>; /*[> CD GPIO <]*/
+	cd-gpios = <&gpio3 RK_PB6 GPIO_ACTIVE_LOW>;
 	sd-uhs-sdr12;
 	sd-uhs-sdr25;
 	sd-uhs-sdr50;
@@ -892,6 +918,31 @@
 		soc_slppin_rst: soc_slppin_rst {
 			rockchip,pins =
 			<0 RK_PA4 RK_FUNC_2 &pcfg_pull_none>;
+		};
+	};
+	
+	btns {
+		btn_pins: btn-pins {
+			rockchip,pins =
+			<2 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA0 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PA5 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>,
+			<1 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>,
+			<2 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>,
+			<3 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>,
+			<3 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>,
+			<3 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>,
+			<3 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 };

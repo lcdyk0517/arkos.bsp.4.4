@@ -50,7 +50,7 @@
 		/* gpio pincontrol setup */
 		pinctrl-names = "default";
 		pinctrl-0 = <&btn_pins>;
-
+		
 		/* Analog mux define */
 		io-channel-names = "amux_adc";
 		io-channels = <&saradc 1>;
@@ -266,7 +266,7 @@
 		regulator-min-microvolt = <3800000>;
 		regulator-max-microvolt = <3800000>;
 	};
-
+	
 	vcc_host: vbus_host {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc_host";
@@ -352,7 +352,8 @@
 		display-timings {
 			native-mode = <&timing0>;
 			
-			timing0: origin {
+			// 64.00MHz / (720+40+8+50)×(1280+8+6+9) = 818×1303 = 60.05 Hz
+			timing0: original {
 				clock-frequency = <0x3d09000>;
 				hactive = <0x2d0>;
 				vactive = <0x500>;

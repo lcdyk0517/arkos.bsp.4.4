@@ -345,7 +345,8 @@
 		display-timings {
 			native-mode = <&timing0>;
 			
-			timing0: origin {
+			// 50.00MHz / (640+450+46+450)×(480+17+5+13) = 1586×515 = 61.22 Hz
+			timing0: original {
 				clock-frequency = <50000000>;
 				hactive = <640>;
 				vactive = <480>;
@@ -646,7 +647,18 @@
 				};
 			};
 			
-			
+			vcc_wifi: LDO_REG9 {
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-name = "vcc_wifi";
+				regulator-always-on;
+				regulator-boot-on;
+				
+				regulator-state-mem {
+					regulator-off-in-suspend;
+					regulator-suspend-microvolt = <3300000>;
+				};
+			};
 			
 			dcdc_boost: BOOST {
 				regulator-always-on;

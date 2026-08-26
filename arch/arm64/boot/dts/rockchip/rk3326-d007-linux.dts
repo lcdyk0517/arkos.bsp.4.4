@@ -338,7 +338,8 @@
 		display-timings {
 			native-mode = <&timing0>;
 			
-			timing0: origin {
+			// 33.00MHz / (640+120+2+120)×(480+18+2+20) = 882×520 = 71.95 Hz
+			timing0: original {
 				clock-frequency = <33000000>;
 				hactive = <640>;
 				vactive = <480>;
