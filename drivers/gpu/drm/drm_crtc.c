@@ -36,6 +36,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_atomic.h>
@@ -2944,6 +2945,87 @@ int drm_mode_set_config_internal(struct drm_mode_set *set)
 	return ret;
 }
 EXPORT_SYMBOL(drm_mode_set_config_internal);
+
+/**
+ * drm_connector_set_mode - look up and apply a mode to a connector
+ * @connector: connector to change the mode of
+ * @mode: mode specification to match against the connector's mode list
+ *
+ * Looks up @mode in @connector's probed mode list and applies the matching
+ * list entry to the CRTC currently driving the connector. On success the
+ * matched mode becomes the connector's preferred mode and the fbdev
+ * emulation is updated to re-apply it on VT switch, lastclose and PM
+ * resume, so the change persists until userspace issues its own modeset.
+ *
+ * This is meant for kernel-internal mode changes initiated on behalf of
+ * console users; it must not race with an active DRM master.
+ *
+ * Note that @mode is only used for matching, it must not be an entry of
+ * the connector's mode list itself.
+ *
+ * Returns:
+ * Zero on success, negative error code otherwise.
+ */
+int drm_connector_set_mode(struct drm_connector *connector,
+			   struct drm_display_mode *mode)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_display_mode *iter, *match = NULL;
+	struct drm_mode_set set;
+	struct drm_crtc *crtc;
+	int ret;
+
+	if (!mode)
+		return -EINVAL;
+
+	drm_modeset_lock_all(dev);
+
+	list_for_each_entry(iter, &connector->modes, head) {
+		if (drm_mode_equal(iter, mode)) {
+			match = iter;
+			break;
+		}
+	}
+
+	if (!match) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	crtc = connector->state ? connector->state->crtc : NULL;
+	if (!crtc && connector->encoder)
+		crtc = connector->encoder->crtc;
+	if (!crtc) {
+		ret = -ENODEV;
+		goto unlock;
+	}
+
+	if (!crtc->primary->fb) {
+		ret = -ENODEV;
+		goto unlock;
+	}
+
+	memset(&set, 0, sizeof(set));
+	set.crtc = crtc;
+	set.mode = match;
+	set.connectors = &connector;
+	set.num_connectors = 1;
+	set.fb = crtc->primary->fb;
+
+	ret = drm_mode_set_config_internal(&set);
+	if (ret == 0) {
+		list_for_each_entry(iter, &connector->modes, head)
+			iter->type &= ~DRM_MODE_TYPE_PREFERRED;
+		match->type |= DRM_MODE_TYPE_PREFERRED;
+
+		drm_fb_helper_update_mode(dev, crtc, match);
+	}
+
+unlock:
+	drm_modeset_unlock_all(dev);
+	return ret;
+}
+EXPORT_SYMBOL(drm_connector_set_mode);
 
 /**
  * drm_crtc_get_hv_timing - Fetches hdisplay/vdisplay for given mode

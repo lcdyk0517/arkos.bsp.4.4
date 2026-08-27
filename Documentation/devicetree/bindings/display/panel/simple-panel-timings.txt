@@ -1,0 +1,49 @@
+panel-simple display-timings vendor extension
+==============================================
+
+The standard display-timing binding[0] allows a "display-timings" node to
+contain multiple timing entries. panel-simple consumes all of them when
+present and registers every entry as a display mode of the DRM connector;
+the entry selected by "native-mode" (or the first child) is the preferred
+mode at startup.
+
+Additionally, as a vendor extension, the timings are exposed through sysfs
+attributes on the panel device (see Documentation/ABI/testing/
+sysfs-panel-simple-timing) which allow switching the active timing at
+runtime. The active timing is tracked as the connector's preferred mode,
+so fbcon and DRM clients follow a switch. This interface is not part of
+the upstream binding and exists for board/firmware tooling only; user
+space that can use the DRM KMS API should prefer setting the mode
+directly.
+
+Example:
+
+	panel {
+		compatible = "simple-panel-dsi";
+		...
+
+		display-timings {
+			native-mode = <&timing0>;
+
+			timing0: timing-60hz {
+				clock-frequency = <63500000>;
+				hactive = <1024>;
+				vactive = <768>;
+				hfront-porch = <48>;
+				hsync-len = <32>;
+				hback-porch = <80>;
+				vfront-porch = <3>;
+				vsync-len = <6>;
+				vback-porch = <14>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+			};
+
+			timing1: timing-61hz {
+				clock-frequency = <65000000>;
+				...
+			};
+		};
+	};
+
+[0] Documentation/devicetree/bindings/display/display-timing.txt

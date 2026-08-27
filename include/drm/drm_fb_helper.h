@@ -163,6 +163,9 @@ int drm_fb_helper_check_var(struct fb_var_screeninfo *var,
 
 int drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper);
 
+void drm_fb_helper_update_mode(struct drm_device *dev, struct drm_crtc *crtc,
+			       struct drm_display_mode *mode);
+
 struct fb_info *drm_fb_helper_alloc_fbi(struct drm_fb_helper *fb_helper);
 void drm_fb_helper_unregister_fbi(struct drm_fb_helper *fb_helper);
 void drm_fb_helper_release_fbi(struct drm_fb_helper *fb_helper);
@@ -255,6 +258,12 @@ static inline int
 drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper)
 {
 	return 0;
+}
+
+static inline void
+drm_fb_helper_update_mode(struct drm_device *dev, struct drm_crtc *crtc,
+			  struct drm_display_mode *mode)
+{
 }
 
 static inline struct fb_info *
