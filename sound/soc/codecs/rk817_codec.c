@@ -54,20 +54,20 @@ module_param_named(dbg_level, dbg_enable, int, 0644);
  */
 #define OUT_VOLUME	(0x03)
 
+/* 最大允许输出: -6.75dB (寄存器值 0x12) */
+#define RK817_VOL_MAX_REG 0x12
+
 #ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
 /*
  * 动态音量范围控制
  * RK817音量寄存器: 0=0dB, 每步-0.375dB, 最大255=-95dB
  * 通过DTS的 volume-min-db 限制最小音量
- * 最大输出固定为-6.75dB（寄存器0x12），与上游保持一致
- * 例如：volume-min-db = <72> 表示范围 -27dB ~ -6.75dB
+ * 最大输出固定为-6.75dB（寄存器0x12）
+ * 例如：volume-min-db = <72> 表示范围 -72dB ~ -6.75dB
  */
 
-/* 最大允许输出: -6.75dB (寄存器值 0x12) */
-#define RK817_VOL_MAX_REG 0x12
-
-/* TLV用于显示dB值（会在probe中更新） */
-static DECLARE_TLV_DB_SCALE(rk817_vol_tlv, -9500, 375, 0);
+/* TLV用于显示dB值（min在probe中按DTS配置更新） */
+static DECLARE_TLV_DB_MINMAX(rk817_vol_tlv, -9500, -675);
 
 /* 前向声明 */
 static int rk817_vol_get(struct snd_kcontrol *kcontrol,
@@ -120,6 +120,7 @@ struct rk817_codec_priv {
 
 	long int playback_path;
 	long int capture_path;
+	bool dac_active;
 
 	struct gpio_desc *spk_ctl_gpio;
 	struct gpio_desc *hp_ctl_gpio;
@@ -341,32 +342,37 @@ static int rk817_codec_ctl_gpio(struct rk817_codec_priv *rk817,
 	return 0;
 }
 
+static void rk817_codec_set_apll_version_cfg(struct snd_soc_codec *codec,
+					     struct rk817_codec_priv *rk817)
+{
+	/* chip_ver=0 视为读取异常，使用上游默认值 */
+	if (rk817->chip_ver > 0 && rk817->chip_ver <= 0x4) {
+		DBG("%s: 0x4 and previous versions\n", __func__);
+		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x0c);
+		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0x95);
+	} else {
+		DBG("%s: using default APLL config (ver=0x%x)\n",
+		    __func__, rk817->chip_ver);
+		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x04);
+		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0xa5);
+	}
+}
+
 static int rk817_reset(struct snd_soc_codec *codec)
 {
 	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
 
 	snd_soc_write(codec, RK817_CODEC_DTOP_LPT_SRST, 0x40);
 	snd_soc_write(codec, RK817_CODEC_DDAC_POPD_DACST, 0x02);
-	snd_soc_write(codec, RK817_CODEC_DI2S_CKM, 0x00);
-	snd_soc_write(codec, RK817_CODEC_DTOP_DIGEN_CLKE, 0xff);
+	snd_soc_write(codec, RK817_CODEC_DTOP_DIGEN_CLKE, 0x0f);
 	snd_soc_write(codec, RK817_CODEC_APLL_CFG1, 0x58);
 	snd_soc_write(codec, RK817_CODEC_APLL_CFG2, 0x2d);
 	snd_soc_write(codec, RK817_CODEC_APLL_CFG3, 0x0c);
 	snd_soc_write(codec, RK817_CODEC_APLL_CFG5, 0x00);
 	snd_soc_write(codec, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00);
 
-	/* 根据芯片版本配置 APLL，chip_ver=0 视为异常使用上游默认值 */
-	if (rk817->chip_ver > 0 && rk817->chip_ver <= 0x4) {
-		DBG("%s (%d): 0x4 and previous versions\n",
-		    __func__, __LINE__);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x0c);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0x95);
-	} else {
-		DBG("%s (%d): using default APLL config (ver=0x%x)\n",
-		    __func__, __LINE__, rk817->chip_ver);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x04);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0xa5);
-	}
+	/* 根据芯片版本配置 APLL */
+	rk817_codec_set_apll_version_cfg(codec, rk817);
 
 	return 0;
 }
@@ -507,6 +513,8 @@ static int rk817_codec_power_up(struct snd_soc_codec *codec, int type)
 			snd_soc_write(codec, playback_power_up_list[i].reg,
 				      playback_power_up_list[i].value);
 		}
+		/* 列表中 APLL_CFG0/CFG4 为通用值，按芯片版本修正 */
+		rk817_codec_set_apll_version_cfg(codec, rk817);
 	}
 
 	if (type & RK817_CODEC_CAPTURE) {
@@ -655,9 +663,6 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 	DBG("%s : set playback_path %ld, pre_path %ld\n",
 	    __func__, rk817->playback_path, pre_path);
 
-	// 在切换路径时先关闭所有GPIO避免冲突
-	rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK | CODEC_SET_HP, 0);
-
 	if (rk817->playback_path != OFF)
 		clk_prepare_enable(rk817->mclk);
 	else
@@ -779,30 +784,41 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 	}
 
-	//根据新路径设置GPIO状态
-	switch (rk817->playback_path) {
-	case SPK_PATH:
+	/*
+	 * 流活跃（播放中）时 GPIO 跟随路径立即切换，
+	 * 否则保持关闭：空闲时开功放会造成底噪。
+	 * 起流/停流时的切换由 digital_mute 负责。
+	 */
+	if (rk817->dac_active) {
+		switch (rk817->playback_path) {
+		case SPK_PATH:
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
-	case RING_SPK:
+		case RING_SPK:
 #endif
-		rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
-		break;
-	case HP_PATH:
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
+			break;
+		case HP_PATH:
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
-	case HP_NO_MIC:
-	case RING_HP:
-	case RING_HP_NO_MIC:
+		case HP_NO_MIC:
+		case RING_HP:
+		case RING_HP_NO_MIC:
 #endif
-		rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
-		break;
-	case SPK_HP:
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
+			break;
+		case SPK_HP:
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
-	case RING_SPK_HP:
+		case RING_SPK_HP:
 #endif
-		rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK | CODEC_SET_HP, 1);
-		break;
-	default:
-		break;
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
+			break;
+		default:
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
+			break;
+		}
 	}
 
 	return 0;
@@ -958,78 +974,73 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_codec *codec = rtd->codec;
 	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
 	unsigned int rate = params_rate(params);
-	unsigned char apll_cfg3_val;
-	unsigned char dtop_digen_sr_lmt0;
+	unsigned int cur_apll_cfg3, mute_st;
+	unsigned char apll_cfg3_val, sr_val;
 
 	DBG("%s : MCLK = %dHz, sample rate = %dHz\n",
 	    __func__, rk817->stereo_sysclk, rate);
 
-	/* chip_ver=0 视为异常，使用上游默认配置 */
-	if (rk817->chip_ver > 0 && rk817->chip_ver <= 0x4) {
-		DBG("%s: 0x4 and previous versions\n", __func__);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x0c);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0x95);
-	} else {
-		DBG("%s: using default APLL config (ver=0x%x)\n",
-		    __func__, rk817->chip_ver);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x04);
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0xa5);
-	}
-
 	switch (rate) {
 	case 8000:
 		apll_cfg3_val = 0x03;
-		dtop_digen_sr_lmt0 = 0x00;
+		sr_val = 0x00;
 		break;
 	case 16000:
 		apll_cfg3_val = 0x06;
-		dtop_digen_sr_lmt0 = 0x01;
+		sr_val = 0x01;
 		break;
 	case 96000:
 		apll_cfg3_val = 0x18;
-		dtop_digen_sr_lmt0 = 0x03;
+		sr_val = 0x03;
 		break;
 	case 32000:
 	case 44100:
 	case 48000:
 		apll_cfg3_val = 0x0c;
-		dtop_digen_sr_lmt0 = 0x02;
+		sr_val = 0x02;
 		break;
 	default:
 		pr_err("Unsupported rate: %d\n", rate);
 		return -EINVAL;
 	}
 
-	if (!((substream->stream == SNDRV_PCM_STREAM_CAPTURE) && rk817->pdmdata_out_enable)) {
-		/* 根据芯片版本更新 APLL 配置，chip_ver=0 视为异常使用上游默认值 */
-		if (rk817->chip_ver > 0 && rk817->chip_ver <= 0x4) {
-			DBG("%s: 0x4 and previous versions, update APLL\n", __func__);
-			snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x0c);
-			snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0x95);
-		} else {
-			DBG("%s: using default APLL config (ver=0x%x)\n",
-			    __func__, rk817->chip_ver);
-			snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x04);
-			snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0xa5);
+	if (!((substream->stream == SNDRV_PCM_STREAM_CAPTURE) &&
+	      rk817->pdmdata_out_enable)) {
+		cur_apll_cfg3 = snd_soc_read(codec, RK817_CODEC_APLL_CFG3);
+
+		/*
+		 * 仅在 APLL 采样率档位变化时才重配并重启时钟，
+		 * 避免重复起流或另一方向起流（如录音时）打断
+		 * 正在进行的播放/录音
+		 */
+		if (cur_apll_cfg3 != apll_cfg3_val) {
+			rk817_codec_set_apll_version_cfg(codec, rk817);
+			snd_soc_write(codec, RK817_CODEC_APLL_CFG3,
+				      apll_cfg3_val);
+
+			/* 重启期间保持静音，结束后恢复原状态 */
+			mute_st = snd_soc_read(codec,
+					       RK817_CODEC_DDAC_MUTE_MIXCTL) &
+				  DACMT_ENABLE;
+			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+					    DACMT_ENABLE, DACMT_ENABLE);
+
+			if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+				rk817_restart_dac_digital_clk_and_apll(codec);
+			else
+				rk817_restart_adc_digital_clk_and_apll(codec);
+
+			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+					    DACMT_ENABLE, mute_st);
 		}
 
-		/* 更新采样率相关配置 */
-		snd_soc_write(codec, RK817_CODEC_APLL_CFG3, apll_cfg3_val);
-		snd_soc_update_bits(codec, RK817_CODEC_DDAC_SR_LMT0,
-				    DACSRT_MASK, dtop_digen_sr_lmt0);
-
-		/* 重启前先静音，防止 DACBIAS 断开产生 pop 噪声 */
-		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-				    DACMT_ENABLE, DACMT_ENABLE);
-
+		/* 按流方向更新各自的采样率寄存器 */
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-			rk817_restart_dac_digital_clk_and_apll(codec);
+			snd_soc_update_bits(codec, RK817_CODEC_DDAC_SR_LMT0,
+					    DACSRT_MASK, sr_val);
 		else
-			rk817_restart_adc_digital_clk_and_apll(codec);
-
-		/* 重启后恢复静音状态 */
-		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-				    DACMT_ENABLE, DACMT_DISABLE);
+			snd_soc_update_bits(codec, RK817_CODEC_DADC_SR_ACL0,
+					    DACSRT_MASK, sr_val);
 	}
 
 	switch (params_format(params)) {
@@ -1055,7 +1066,10 @@ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute)
 	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
 
 	DBG("%s %d, playback_path %ld\n", __func__, mute, rk817->playback_path);
-	
+
+	/* 跟踪流状态，供路径切换时判断是否需要同步 GPIO */
+	rk817->dac_active = !mute;
+
 	if (mute)
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
 				    DACMT_ENABLE, DACMT_ENABLE);
@@ -1270,26 +1284,16 @@ static int rk817_probe(struct snd_soc_codec *codec)
 	rk817->playback_path = OFF;
 	rk817->capture_path = MIC_OFF;
 
-	/* 始终启用 mclk，在 rk817_remove 中禁用 */
-	/* 读取芯片版本 */
-	{
-		int chip_name = snd_soc_read(codec, RK817_PMIC_CHIP_NAME);
-		int chip_ver = snd_soc_read(codec, RK817_PMIC_CHIP_VER);
-		rk817->chip_ver = (chip_ver & 0x0f);
-		dev_info(codec->dev, "%s: chip_name:0x%x, chip_ver:0x%x\n",
-			 __func__, chip_name, chip_ver);
-	}
-
 	rk817_reset(codec);
 
 #ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
 	/*
 	 * 更新TLV显示范围
-	 * DECLARE_TLV_DB_SCALE创建的数组格式: [类型, 长度, min_dB, step]
+	 * DECLARE_TLV_DB_MINMAX创建的数组格式: [类型, 长度, min_dB, max_dB]
 	 * rk817_vol_tlv[2] = min_dB
 	 */
 	rk817_vol_tlv[2] = rk817->volume_min_db;
-	dev_info(codec->dev, "%s: volume range %d dB to -6 dB\n",
+	dev_info(codec->dev, "%s: volume range %d dB to -6.75 dB\n",
 		 __func__, rk817->volume_min_db / 100);
 #endif
 
@@ -1312,7 +1316,10 @@ static int rk817_remove(struct snd_soc_codec *codec)
 
 	rk817_codec_power_down(codec, RK817_CODEC_ALL);
 	mdelay(10);
-	clk_disable_unprepare(rk817->mclk);
+
+	/* mclk 仅在路径非 OFF 时被使能过，需对应地释放 */
+	if (rk817->playback_path != OFF || rk817->capture_path != MIC_OFF)
+		clk_disable_unprepare(rk817->mclk);
 
 	return 0;
 }
@@ -1440,9 +1447,9 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 
 	/*
 	 * 解析动态音量最小值
-	 * DTS中使用正整数表示dB绝对值，如 volume-min-db = <72>; 表示 -27dB
+	 * DTS中使用正整数表示dB绝对值，如 volume-min-db = <72>; 表示 -72dB
 	 * 驱动内部转换为负值并使用0.01dB单位
-	 * 最大音量固定为-6.75dB（寄存器0x12），与上游保持一致
+	 * 最大音量固定为-6.75dB（寄存器0x12）
 	 */
 	ret = of_property_read_u32(node, "volume-min-db", &rk817->volume_min_db);
 	if (ret < 0) {
@@ -1492,6 +1499,26 @@ static int rk817_platform_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	platform_set_drvdata(pdev, rk817_codec_data);
+
+	/*
+	 * 通过 MFD 的 regmap 读取芯片版本（codec 自身 regmap 限制在
+	 * 0x4f 以内且白名单不含 0xed/0xee，无法直接读取）
+	 */
+	{
+		unsigned int chip_ver = 0;
+
+		ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_VER,
+				  &chip_ver);
+		if (!ret) {
+			rk817_codec_data->chip_ver = chip_ver & 0x0f;
+			dev_info(&pdev->dev, "%s: chip_ver: 0x%x\n",
+				 __func__, rk817_codec_data->chip_ver);
+		} else {
+			dev_err(&pdev->dev,
+				"%s: failed to read chip version: %d\n",
+				__func__, ret);
+		}
+	}
 
 	ret = rk817_codec_parse_dt_property(&pdev->dev, rk817_codec_data);
 	if (ret < 0) {
@@ -1543,7 +1570,8 @@ static void rk817_platform_shutdown(struct platform_device *pdev)
 
 	DBG("%s\n", __func__);
 
-	rk817_codec_power_down(rk817->codec, RK817_CODEC_ALL);
+	if (rk817 && rk817->codec)
+		rk817_codec_power_down(rk817->codec, RK817_CODEC_ALL);
 
 }
 
