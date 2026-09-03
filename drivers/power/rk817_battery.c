@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/extcon.h>
 #include <linux/fb.h>
+#include <linux/fs.h>
 #include <linux/gpio.h>
 #include <linux/iio/consumer.h>
 #include <linux/iio/iio.h>
@@ -30,6 +31,11 @@
 #include <linux/wakelock.h>
 #include <linux/workqueue.h>
 #include <linux/gpio/consumer.h>
+#include <linux/uaccess.h>
+
+/* Userland persistence path for learned battery calibration anchors */
+#define HYBRID_CALIB_PATH	"/var/lib/rk817_battery_calib"
+#define HYBRID_CALIB_LOAD_TRIES	36	/* ~3 min at 5s work period */
 
 /* Hybrid mode (voltage + coulomb counting) constants */
 #define HYBRID_V_FULL_CHG_DEFAULT	4100
@@ -259,8 +265,6 @@ enum rk817_battery_fields {
 	NEW_FCC_REG2, NEW_FCC_REG1, NEW_FCC_REG0,
 	RESET_MODE,
 	FG_INIT, HALT_CNT_REG, CALC_REST_REGL, UPDATE_LEVE_REG,
-	V_FULL_CHG_L, V_FULL_CHG_H,
-	V_FULL_DIS_L, V_FULL_DIS_H,
 	VOL_ADC_B3, VOL_ADC_B2, VOL_ADC_B1, VOL_ADC_B0,
 	VOL_ADC_K3, VOL_ADC_K2, VOL_ADC_K1, VOL_ADC_K0,
 	BAT_EXS, CHG_STS, BAT_OVP_STS, CHRG_IN_CLAMP,
@@ -417,10 +421,6 @@ static const struct reg_field rk817_battery_reg_fields[] = {
 	[HALT_CNT_REG] = REG_FIELD(0xA6, 0, 7),
 	[CALC_REST_REGL] = REG_FIELD(0xA7, 0, 7),
 	[UPDATE_LEVE_REG] = REG_FIELD(0xA8, 0, 7),
-	[V_FULL_CHG_L] = REG_FIELD(0xC6, 0, 7),
-	[V_FULL_CHG_H] = REG_FIELD(0xC7, 0, 7),
-	[V_FULL_DIS_L] = REG_FIELD(0xC8, 0, 7),
-	[V_FULL_DIS_H] = REG_FIELD(0xC9, 0, 7),
 
 	[VOL_ADC_B3] = REG_FIELD(0xA9, 0, 7),
 	[VOL_ADC_B2] = REG_FIELD(0xAA, 0, 7),
@@ -565,6 +565,8 @@ struct rk817_battery_device {
 	int64_t				hybrid_last_loop_sec;	/* last loop boottime */
 	bool				hybrid_first_run;	/* first iteration flag */
 	int64_t				hybrid_99_start_sec;	/* time when SOC first hit 99% */
+	bool				hybrid_map_loaded;	/* calib file load completed */
+	u8				hybrid_map_tries;	/* calib file load attempts */
 
 	/* Per-device state (formerly static locals) */
 	u32				save_cap_old;		/* for rk817_bat_save_cap */
@@ -783,21 +785,43 @@ static int64_t rk817_hybrid_boottime_sec(void)
 	return ts.tv_sec;
 }
 
+static int rk817_hybrid_file_write(struct rk817_battery_device *battery)
+{
+	struct file *fp;
+	mm_segment_t oldfs;
+	char buf[32];
+	int len, ret;
+
+	len = snprintf(buf, sizeof(buf), "%d %d\n",
+		       battery->hybrid_v_full_chg,
+		       battery->hybrid_v_full_dis);
+
+	fp = filp_open(HYBRID_CALIB_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (IS_ERR(fp))
+		return PTR_ERR(fp);
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = kernel_write(fp, buf, len, 0);
+	set_fs(oldfs);
+
+	filp_close(fp, NULL);
+
+	return (ret == len) ? 0 : (ret < 0 ? (int)ret : -EIO);
+}
+
 static void rk817_hybrid_save_map(struct rk817_battery_device *battery)
 {
-	u8 buf;
+	int ret;
 
-	/* Save V_FULL_CHG (2 bytes: high + low) */
-	buf = (battery->hybrid_v_full_chg >> 8) & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_CHG_H, buf);
-	buf = battery->hybrid_v_full_chg & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_CHG_L, buf);
+	ret = rk817_hybrid_file_write(battery);
+	if (ret) {
+		pr_err("hybrid: failed to save calib to %s (%d)\n",
+		       HYBRID_CALIB_PATH, ret);
+		return;
+	}
 
-	/* Save V_FULL_DIS (2 bytes: high + low) */
-	buf = (battery->hybrid_v_full_dis >> 8) & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_DIS_H, buf);
-	buf = battery->hybrid_v_full_dis & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_DIS_L, buf);
+	battery->hybrid_map_loaded = true;
 
 	DBG("hybrid: saved vfull_chg=%d vfull_dis=%d\n",
 	    battery->hybrid_v_full_chg, battery->hybrid_v_full_dis);
@@ -805,15 +829,41 @@ static void rk817_hybrid_save_map(struct rk817_battery_device *battery)
 
 static void rk817_hybrid_load_map(struct rk817_battery_device *battery)
 {
+	struct file *fp;
+	mm_segment_t oldfs;
+	char buf[32];
+	ssize_t n;
 	int vchg, vdis;
 
-	/* Load V_FULL_CHG (2 bytes) */
-	vchg = (rk817_bat_field_read(battery, V_FULL_CHG_H) << 8) |
-		rk817_bat_field_read(battery, V_FULL_CHG_L);
+	if (battery->hybrid_map_loaded)
+		return;
 
-	/* Load V_FULL_DIS (2 bytes) */
-	vdis = (rk817_bat_field_read(battery, V_FULL_DIS_H) << 8) |
-		rk817_bat_field_read(battery, V_FULL_DIS_L);
+	if (++battery->hybrid_map_tries > HYBRID_CALIB_LOAD_TRIES) {
+		battery->hybrid_map_loaded = true;
+		return;
+	}
+
+	fp = filp_open(HYBRID_CALIB_PATH, O_RDONLY, 0);
+	if (IS_ERR(fp)) {
+		/* ENOENT: rootfs not mounted yet or never learned */
+		return;
+	}
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	n = kernel_read(fp, 0, buf, sizeof(buf) - 1);
+	set_fs(oldfs);
+
+	filp_close(fp, NULL);
+
+	battery->hybrid_map_loaded = true;
+
+	if (n <= 0)
+		return;
+
+	buf[n] = '\0';
+	if (sscanf(buf, "%d %d", &vchg, &vdis) != 2)
+		return;
 
 	/* Validate and apply */
 	if (vchg >= 3600 && vchg <= 4600) {
@@ -3078,6 +3128,8 @@ static void rk817_battery_work(struct work_struct *work)
 
 	rk817_bat_update_fg_info(battery);
 
+	rk817_hybrid_load_map(battery);
+
 	rk817_hybrid_calculate(battery);
 
 	rk817_bat_update_fcc(battery);
@@ -3255,8 +3307,9 @@ static int rk817_battery_probe(struct platform_device *pdev)
 	battery->hybrid_first_run = true;
 	battery->hybrid_99_start_sec = 0;
 
-	/* Load learned voltage anchors from persistent storage */
-	rk817_hybrid_load_map(battery);
+	/* Calib file is lazy-loaded from rk817_battery_work once rootfs is up */
+	battery->hybrid_map_loaded = false;
+	battery->hybrid_map_tries = 0;
 
 	BAT_INFO("hybrid mode: vfull_chg=%d vfull_dis=%d "
 		 "vempty_chg=%d vempty_dis=%d\n",
