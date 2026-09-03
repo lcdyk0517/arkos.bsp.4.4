@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* CoolBoy RS16
+*
+*/
+
+/dts-v1/;
+#include "rk3326-dc35v-linux.dts"
+
+/ {
+	model = "CoolBoy RS-16";
+	compatible = "rockchip,rk3326-rs16-linux", "rockchip,rk3326";
+};
+
+&rk817_codec {
+	/delete-property/ use-ext-amplifier;
+};
+
+&battery {
+	design_capacity = <2867>;
+	design_qmax = <3000>;
+};

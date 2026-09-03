@@ -106,6 +106,7 @@ rk3326-rgb10x-linux|rgb10x
 rk3326-rgb20s-linux|rgb20s
 rk3326-rgbv10-linux|rgbv10
 rk3326-rp1-linux|rp1
+rk3326-rs16-linux|rs16
 rk3326-rx6h-linux|rx6h
 rk3326-t16max-linux|t16max
 rk3326-u8-panel1-linux|u8 panel1

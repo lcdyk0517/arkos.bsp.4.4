@@ -74,6 +74,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rgb10x-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rgb20s-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rgbv10-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rp1-linux.dtb
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rs16-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-rx6h-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-t16max-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-u8-panel1-linux.dtb

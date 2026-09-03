@@ -694,7 +694,7 @@
 			};
 		};
 		
-		battery {
+		battery: battery {
 			compatible = "rk817,battery", "rk817_fg";
 			ocv_table = <
 			3300 3340 3380 3420 3460 3500 3540
