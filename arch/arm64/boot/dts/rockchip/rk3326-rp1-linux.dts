@@ -60,6 +60,7 @@
 		
 		/* poll device interval (ms), adc read interval */
 		poll-interval = <20>;
+		invert-absx;
 		stick-switch-key = <BTN_TRIGGER_HAPPY5>;
 		sw1 {
 			gpios = <&gpio1 RK_PA6 GPIO_ACTIVE_LOW>;

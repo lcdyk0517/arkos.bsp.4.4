@@ -67,8 +67,3 @@
 		};
 	};
 };
-
-&rk817_codec {
-    /delete-property/ spk-mute-delay-ms;
-    /delete-property/ use-ext-amplifier;
-};
