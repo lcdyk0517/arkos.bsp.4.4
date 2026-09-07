@@ -72,6 +72,11 @@ struct rk_keys_button {
 	struct timer_list timer;
 };
 
+struct rk_keys_attr {
+	struct device_attribute dattr;
+	int index;
+};
+
 struct rk_keys_drvdata {
 	int nbuttons;
 	/* flag to indicate if we're suspending/resuming */
@@ -83,6 +88,8 @@ struct rk_keys_drvdata {
 	struct input_dev *input;
 	struct delayed_work adc_poll_work;
 	struct iio_channel *chan;
+	struct rk_keys_attr *kattrs;
+	int nattrs;
 	struct rk_keys_button button[0];
 };
 
@@ -166,15 +173,110 @@ static irqreturn_t keys_isr(int irq, void *dev_id)
 }
 
 /*
-static ssize_t adc_value_show(struct device *dev, struct device_attribute *attr,
-			      char *buf)
+ * Runtime tunable adc_value for TYPE_ADC buttons, exposed as
+ * /sys/devices/platform/<node>/adc_value_<label> (spaces in label
+ * are replaced with '_'). The new value takes effect on the next
+ * adc poll cycle (~100ms). Not persistent across reboot.
+ */
+static ssize_t adc_value_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
 {
 	struct rk_keys_drvdata *ddata = dev_get_drvdata(dev);
+	struct rk_keys_attr *kattr =
+	    container_of(attr, struct rk_keys_attr, dattr);
 
-	return sprintf(buf, "adc_value: %d\n", ddata->result);
+	return sprintf(buf, "%d\n", ddata->button[kattr->index].adc_value);
 }
-static DEVICE_ATTR(get_adc_value, S_IRUGO | S_IWUSR, adc_value_show, NULL);
-*/
+
+static ssize_t adc_value_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct rk_keys_drvdata *ddata = dev_get_drvdata(dev);
+	struct rk_keys_attr *kattr =
+	    container_of(attr, struct rk_keys_attr, dattr);
+	int val, ret;
+
+	ret = kstrtoint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	/*
+	 * adc_value is the window center; 0 is valid (ladder may pull
+	 * the channel to 0V), 1024 is the 10-bit saradc upper bound
+	 */
+	if (val < 0 || val >= EMPTY_DEFAULT_ADVALUE)
+		return -EINVAL;
+
+	ddata->button[kattr->index].adc_value = val;
+
+	return count;
+}
+
+static void rk_keys_remove_adc_attrs(struct rk_keys_drvdata *ddata,
+				     struct device *dev)
+{
+	int i;
+
+	for (i = 0; i < ddata->nattrs; i++)
+		device_remove_file(dev, &ddata->kattrs[i].dattr);
+	ddata->nattrs = 0;
+}
+
+static int rk_keys_create_adc_attrs(struct rk_keys_drvdata *ddata,
+				    struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	int i, ret;
+
+	ddata->kattrs = devm_kzalloc(dev, ddata->nbuttons *
+				     sizeof(struct rk_keys_attr), GFP_KERNEL);
+	if (!ddata->kattrs)
+		return -ENOMEM;
+
+	for (i = 0; i < ddata->nbuttons; i++) {
+		struct rk_keys_button *button = &ddata->button[i];
+		struct rk_keys_attr *kattr = &ddata->kattrs[ddata->nattrs];
+		char namebuf[48];
+		char *p;
+
+		if (button->type != TYPE_ADC)
+			continue;
+
+		if (button->desc && *button->desc)
+			snprintf(namebuf, sizeof(namebuf), "adc_value_%s",
+				 button->desc);
+		else
+			snprintf(namebuf, sizeof(namebuf), "adc_value%d", i);
+
+		for (p = namebuf; *p; p++)
+			if (*p == ' ')
+				*p = '_';
+
+		sysfs_attr_init(&kattr->dattr.attr);
+		kattr->dattr.attr.name = devm_kstrdup(dev, namebuf, GFP_KERNEL);
+		if (!kattr->dattr.attr.name) {
+			ret = -ENOMEM;
+			goto fail;
+		}
+		kattr->dattr.attr.mode = 0644;
+		kattr->dattr.show = adc_value_show;
+		kattr->dattr.store = adc_value_store;
+		kattr->index = i;
+
+		ret = device_create_file(dev, &kattr->dattr);
+		if (ret)
+			goto fail;
+
+		ddata->nattrs++;
+	}
+
+	return 0;
+
+fail:
+	rk_keys_remove_adc_attrs(ddata, dev);
+	return ret;
+}
 
 static const struct of_device_id rk_key_match[] = {
 	{ .compatible = "rockchip,key", .data = NULL},
@@ -208,10 +310,21 @@ static void adc_key_poll(struct work_struct *work)
 		if (result > INVALID_ADVALUE &&
 		    result < (EMPTY_DEFAULT_ADVALUE - ddata->drift_advalue))
 			ddata->result = result;
+		/*
+		 * iio read error (negative): skip this cycle instead of
+		 * false-matching low-centered keys
+		 */
+		if (result < 0)
+			goto resched;
 		for (i = 0; i < ddata->nbuttons; i++) {
 			struct rk_keys_button *button = &ddata->button[i];
 
-			if (!button->adc_value)
+			/*
+			 * adc_value == 0 is a valid center value (some
+			 * ladders pull the channel to 0V), so decide
+			 * by button type, not by adc_value
+			 */
+			if (button->type != TYPE_ADC)
 				continue;
 			if (result < button->adc_value + ddata->drift_advalue &&
 			    result > button->adc_value - ddata->drift_advalue)
@@ -224,6 +337,7 @@ static void adc_key_poll(struct work_struct *work)
 		}
 	}
 
+resched:
 	schedule_delayed_work(&ddata->adc_poll_work, ADC_SAMPLE_JIFFIES);
 }
 
@@ -376,6 +490,11 @@ static int keys_probe(struct platform_device *pdev)
 	if (error)
 		goto fail0;
 
+	/* runtime tunable adc_value for adc keys */
+	error = rk_keys_create_adc_attrs(ddata, pdev);
+	if (error)
+		goto fail0;
+
 	/* 从 DT 读取 autorepeat; 若存在则开启重复 */
 	if (of_property_read_bool(np, "autorepeat"))
 			ddata->rep = 1;
@@ -487,6 +606,7 @@ static int keys_remove(struct platform_device *pdev)
 	int i;
 
 	device_init_wakeup(dev, 0);
+	rk_keys_remove_adc_attrs(ddata, dev);
 	for (i = 0; i < ddata->nbuttons; i++)
 		del_timer_sync(&ddata->button[i].timer);
 	if (ddata->chan)
