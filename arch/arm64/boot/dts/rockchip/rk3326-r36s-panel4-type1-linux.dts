@@ -69,7 +69,7 @@
 		panel-exit-sequence = <0x5140128 0x50a0110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
 			// 29.00MHz / (640+46+2+44)×(480+16+2+14) = 732×512 = 77.38 Hz
 			timing0: original {
