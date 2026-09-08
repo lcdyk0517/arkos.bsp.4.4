@@ -65,15 +65,18 @@ rk3326-r36s-sauce-panel2-linux|sauce panel2
 rk3326-r36s-sauce-panel3-linux|sauce panel3
 rk3326-r36s-sauce-panel4-linux|sauce panel4
 rk3326-r36s-sauce-panel5-linux|sauce panel5
-rk3326-r36s-type1-linux|clone type1
-rk3326-r36s-type1-with-amp-linux|clone type1 amp
-rk3326-r36s-type1-invert-linux|clone type1 invert
-rk3326-r36s-type2-linux|clone type2
-rk3326-r36s-type2-with-amp-linux|clone type2 amp
-rk3326-r36s-type3-panel1-linux|clone type3 panel1
-rk3326-r36s-type3-panel2-linux|clone type3 panel2
-rk3326-r36s-type3-panel3-linux|clone type3 panel3
-rk3326-r36s-type5-linux|clone type5
+rk3326-r36s-type1-panel1-linux|clone type1 panel1
+rk3326-r36s-type1-panel1-invert-linux|clone type1 panel1 invert
+rk3326-r36s-type1-panel1-with-amp-linux|clone type1 panel1 amp
+rk3326-r36s-type1-panel2-linux|clone type1 panel2
+rk3326-r36s-type1-panel3-linux|clone type1 panel3
+rk3326-r36s-type1-panel4-linux|clone type1 panel4
+rk3326-r36s-type1-panel5-linux|clone type1 panel5
+rk3326-r36s-type1-panel5-invert-linux|clone type1 panel5 invert
+rk3326-r36s-type1-panel6-linux|clone type1 panel6
+rk3326-r36s-type2-panel1-linux|clone type2 panel1
+rk3326-r36s-type2-panel1-with-amp-linux|clone type2 panel1 amp
+rk3326-r36s-type2-panel2-linux|clone type2 panel2
 rk3326-r36s-v21-linux|v21 panel4 rumble test
 rk3326-r36splus-linux|r36splus
 rk3326-r36t-linux|r36t

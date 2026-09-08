@@ -7,7 +7,7 @@
 */
 
 /dts-v1/;
-#include "rk3326-r36s-type2-linux.dts"
+#include "rk3326-r36s-type2-panel1-linux.dts"
 
 &rk817_codec {
 	spk-ctl-gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;

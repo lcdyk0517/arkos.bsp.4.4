@@ -2,7 +2,7 @@
 /*
 * Copyright (c) 2025 kk&lcdyk
 *
-* R36S Clone掌机 种类1 Without Amplifie
+* R36S Clone掌机 种类1
 *
 */
 
@@ -11,5 +11,5 @@
 
 / {
 	model = "R36S Clone Type1";
-	compatible = "rockchip,rk3326-r36s-type1-linux", "rockchip,rk3326";
+	compatible = "rockchip,rk3326-r36s-linux", "rockchip,rk3326";
 };

@@ -2,12 +2,12 @@
 /*
 * Copyright (c) 2025 kk&lcdyk
 *
-* R36S Clone掌机 种类3 屏幕3
+* R36S Clone掌机 种类1
 *
 */
 
 /dts-v1/;
-#include "rk3326-r36s-type3-panel1-linux.dts"
+#include "rk3326-r36s-type1-panel1-linux.dts"
 
 &dsi {
 	status = "okay";
@@ -27,6 +27,12 @@
 		enable-delay-ms = <120>;
 		disable-delay-ms = <20>;
 		unprepare-delay-ms = <20>;
+		uboot-prepare-delay-ms = <320>;
+		uboot-reset-delay-ms = <576>;
+		uboot-init-delay-ms = <320>;
+		uboot-enable-delay-ms = <320>;
+		uboot-disable-delay-ms = <320>;
+		uboot-unprepare-delay-ms = <20>;
 		width-mm = <153>;
 		height-mm = <85>;
 		dsi,flags  = <(MIPI_DSI_MODE_VIDEO |
@@ -57,6 +63,7 @@
 				de-active = <0>;
 				pixelclk-active = <0>;
 			};
+			/delete-node/ timing1;
 		};
 	};
 };
