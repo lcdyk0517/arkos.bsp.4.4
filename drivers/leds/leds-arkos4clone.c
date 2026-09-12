@@ -5,12 +5,13 @@
  * 驱动概述
  * =====================================================================
  *
- * 本驱动支持 Arkos4Clone 设备上的所有 LED 灯，共 3 种类型、最多 9 个 LED：
+ * 本驱动支持 Arkos4Clone 设备上的所有 LED 灯，共 3 种类型、最多 11 个 LED：
  *
  *   第一类：电源灯（充电指示灯）
  *     - arkos4clone-led  : 双色 LED，单个 GPIO 控制两种颜色
  *     - led-red          : 独立红色 LED
  *     - led-blue         : 独立蓝色 LED
+ *     - led-green        : 独立绿色 LED
  *
  *   第二类：摇杆灯（用户可自由控制）
  *     - joy-green        : 摇杆 RGB 绿色
@@ -18,6 +19,7 @@
  *     - joy-blue         : 摇杆 RGB 蓝色
  *     - joy-left         : 左侧 LED
  *     - joy-right        : 右侧 LED
+ *     - joy-led          : 摇杆 LED
  *
  *   第三类：脉冲 RGB LED（单线脉冲协议）
  *     - joyled           : 通过脉冲数量控制 10 种颜色/效果
@@ -89,10 +91,14 @@
  *       led-low-color = "blue";
  *       led-red = <&gpio0 RK_PC1 GPIO_ACTIVE_HIGH>;
  *       led-blue = <&gpio0 RK_PA0 GPIO_ACTIVE_HIGH>;
+ *       led-green = <&gpio0 RK_PA1 GPIO_ACTIVE_HIGH>;
  *       // 摇杆灯 (v1 和 v2 共用)
  *       joy-green = <&gpio2 RK_PA1 GPIO_ACTIVE_HIGH>;
  *       joy-red = <&gpio2 RK_PA2 GPIO_ACTIVE_HIGH>;
  *       joy-blue = <&gpio2 RK_PA0 GPIO_ACTIVE_HIGH>;
+ *       joy-left = <&gpio2 RK_PA3 GPIO_ACTIVE_HIGH>;
+ *       joy-right = <&gpio2 RK_PA4 GPIO_ACTIVE_HIGH>;
+ *       joy-led = <&gpio2 RK_PA5 GPIO_ACTIVE_HIGH>;
  *       // 脉冲 RGB LED
  *       pulse-gpios = <&gpio0 RK_PB3 GPIO_ACTIVE_HIGH>;
  *       irq-gpios = <&gpio0 RK_PB4 GPIO_ACTIVE_HIGH>;
@@ -115,11 +121,14 @@
  *     - led-red/battery_threshold        (RW) : 电量阈值
  *     - led-blue/brightness              (RW) : 独立电源灯 (0/1)
  *     - led-blue/battery_threshold       (RW) : 电量阈值
+ *     - led-green/brightness             (RW) : 独立电源灯 (0/1)
+ *     - led-green/battery_threshold      (RW) : 电量阈值
  *     - joy-green/brightness             (RW) : 摇杆灯 (0/1)
  *     - joy-red/brightness               (RW) : 摇杆灯 (0/1)
  *     - joy-blue/brightness              (RW) : 摇杆灯 (0/1)
  *     - joy-left/brightness              (RW) : 摇杆灯 (0/1)
  *     - joy-right/brightness             (RW) : 摇杆灯 (0/1)
+ *     - joy-led/brightness               (RW) : 摇杆灯 (0/1)
  *     - joyled/brightness                (RW) : 脉冲 LED (0-255)
  *     - joyled/mode                      (RW) : 脉冲模式 (off/red/green/...)
  *
@@ -143,7 +152,7 @@
 #include <linux/interrupt.h>
 
 /* 最大独立 LED 数量 */
-#define MAX_LEDS		7
+#define MAX_LEDS		9
 
 /* 充电状态轮询间隔（毫秒） */
 #define CHARGE_POLL_INTERVAL	2000
@@ -173,11 +182,13 @@ enum pulse_led_mode {
 enum {
 	LED_RED = 0,
 	LED_BLUE,
+	LED_GREEN,
 	LED_JOY_GREEN,
 	LED_JOY_RED,
 	LED_JOY_BLUE,
 	LED_JOY_LEFT,
 	LED_JOY_RIGHT,
+	LED_JOY_LED,
 };
 
 /* 独立 LED 结构体 */
@@ -246,11 +257,13 @@ ATTRIBUTE_GROUPS(joyled);
 static const char *led_names[MAX_LEDS] = {
 	"led-red",
 	"led-blue",
+	"led-green",
 	"joy-green",
 	"joy-red",
 	"joy-blue",
 	"joy-left",
 	"joy-right",
+	"joy-led",
 };
 
 /**
@@ -655,7 +668,7 @@ static int arkos4clone_led_init(struct device *dev,
 				int index,
 				struct arkos4clone_led_priv *priv)
 {
-	unsigned long flags = GPIOF_OUT_INIT_LOW;
+	unsigned long flags;
 	int ret;
 
 	led->valid = false;
@@ -667,6 +680,9 @@ static int arkos4clone_led_init(struct device *dev,
 		dev_dbg(dev, "LED %s: GPIO not configured\n", name);
 		return 0;
 	}
+
+	/* 所有 LED 初始状态为灭 */
+	flags = active_low ? GPIOF_OUT_INIT_HIGH : GPIOF_OUT_INIT_LOW;
 
 	if (active_low)
 		flags |= GPIOF_ACTIVE_LOW;
@@ -1354,9 +1370,9 @@ static ssize_t gpio_show(struct device *dev,
 
 	for (i = 0; i < MAX_LEDS; i++) {
 		if (priv->leds[i].valid) {
+			int gpio_val = gpiod_get_value_cansleep(priv->leds[i].gpiod);
 			count += scnprintf(buf + count, PAGE_SIZE - count, "%s: %d\n",
-					   led_names[i],
-					   gpiod_get_value_cansleep(priv->leds[i].gpiod));
+					   led_names[i], gpio_val);
 		}
 	}
 
@@ -1398,6 +1414,8 @@ static ssize_t colors_show(struct device *dev,
 		count += scnprintf(buf + count, PAGE_SIZE - count, "led-red: 0/1\n");
 	if (priv->leds[LED_BLUE].valid)
 		count += scnprintf(buf + count, PAGE_SIZE - count, "led-blue: 0/1\n");
+	if (priv->leds[LED_GREEN].valid)
+		count += scnprintf(buf + count, PAGE_SIZE - count, "led-green: 0/1\n");
 	if (priv->leds[LED_JOY_GREEN].valid)
 		count += scnprintf(buf + count, PAGE_SIZE - count, "joy-green: 0/1\n");
 	if (priv->leds[LED_JOY_RED].valid)
@@ -1408,6 +1426,8 @@ static ssize_t colors_show(struct device *dev,
 		count += scnprintf(buf + count, PAGE_SIZE - count, "joy-left: 0/1\n");
 	if (priv->leds[LED_JOY_RIGHT].valid)
 		count += scnprintf(buf + count, PAGE_SIZE - count, "joy-right: 0/1\n");
+	if (priv->leds[LED_JOY_LED].valid)
+		count += scnprintf(buf + count, PAGE_SIZE - count, "joy-led: 0/1\n");
 
 	if (count == 0)
 		count = scnprintf(buf, PAGE_SIZE, "No LEDs configured\n");

@@ -101,12 +101,12 @@
 			linux,code = <BTN_NORTH>;
 		};
 		sw11 {
-			gpios = <&gpio2 RK_PB6 GPIO_ACTIVE_LOW>; //占位用
+			gpios = <&gpio2 RK_PB6 GPIO_ACTIVE_LOW>;//占位用
 			label = "BTN_THUMBR";
 			linux,code = <BTN_TRIGGER_HAPPY4>;
 		};
 		sw12 {
-			gpios = <&gpio2 RK_PB5 GPIO_ACTIVE_LOW>; //占位用
+			gpios = <&gpio2 RK_PB5 GPIO_ACTIVE_LOW>;//占位用
 			label = "BTN_THUMBL";
 			linux,code = <BTN_TRIGGER_HAPPY3>;
 		};
@@ -325,22 +325,23 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing1: origin {
-				clock-frequency = <0x1c9c380>;
-				hactive = <0x1e0>;
-				vactive = <0x280>;
-				hfront-porch = <0x14>;
-				hsync-len = <0x04>;
-				hback-porch = <0x14>;
-				vfront-porch = <0x0c>;
-				vsync-len = <0x04>;
-				vback-porch = <0x10>;
-				hsync-active = <0x00>;
-				vsync-active = <0x00>;
-				de-active = <0x00>;
-				pixelclk-active = <0x00>;
+			// 30.00MHz / (480+20+4+20)×(640+12+4+16) = 524×672 = 85.20 Hz
+			timing0: original {
+				clock-frequency = <30000000>;
+				hactive = <480>;
+				vactive = <640>;
+				hfront-porch = <20>;
+				hsync-len = <4>;
+				hback-porch = <20>;
+				vfront-porch = <12>;
+				vsync-len = <4>;
+				vback-porch = <16>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
 			};
 		};
 	};

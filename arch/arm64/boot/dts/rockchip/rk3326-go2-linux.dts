@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2026 kk&lcdyk
+*
+* Lenovo GO2
+*
+*/
+
+/dts-v1/;
+#include "rk3326-h7-linux.dts"
+
+/ {
+	model = "Lenovo GO2";
+	compatible = "rockchip,rk3326-go2-linux", "rockchip,rk3326";
+};
+

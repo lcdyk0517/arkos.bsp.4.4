@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* AISLPC R36T 掌机
+*
+*/
+
+/dts-v1/;
+#include "rk3326-k36s-linux.dts"
+
+/ {
+	model = "AISLPC R36T";
+	compatible = "rockchip,rk3326-k36s-linux", "rockchip,rk3326";
+};

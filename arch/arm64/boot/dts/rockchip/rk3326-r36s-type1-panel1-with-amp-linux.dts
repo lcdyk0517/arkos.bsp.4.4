@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* R36S Clone掌机 种类1
+*
+*/
+
+/dts-v1/;
+#include "rk3326-r36pro-linux.dts"
+
+/ {
+	model = "R36S Clone Type1";
+	compatible = "rockchip,rk3326-r36s-linux", "rockchip,rk3326";
+};

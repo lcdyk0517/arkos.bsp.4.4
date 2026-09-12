@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* R36S Clone掌机 种类1
+*
+*/
+
+/dts-v1/;
+#include "rk3326-r36s-type1-panel1-linux.dts"
+
+&dsi {
+	status = "okay";
+	
+	panel@0 {
+		compatible = "simple-panel-dsi";
+		reg = <0>;
+		/* pwm1 backlight */
+		backlight = <&backlight>;
+		/* LCD reset gpio GPIO3.D3 */
+		reset-gpios = <&gpio3 RK_PB7 GPIO_ACTIVE_LOW>;
+		/* power-supply-gpio GPIO3.A3  */
+		enable-gpios = <&gpio0 RK_PB5 GPIO_ACTIVE_HIGH>;
+		prepare-delay-ms = <20>;
+		reset-delay-ms = <20>;
+		init-delay-ms = <20>;
+		enable-delay-ms = <120>;
+		disable-delay-ms = <20>;
+		unprepare-delay-ms = <20>;
+		uboot-prepare-delay-ms = <320>;
+		uboot-reset-delay-ms = <576>;
+		uboot-init-delay-ms = <320>;
+		uboot-enable-delay-ms = <320>;
+		uboot-disable-delay-ms = <320>;
+		uboot-unprepare-delay-ms = <20>;
+		width-mm = <153>;
+		height-mm = <85>;
+		dsi,flags  = <(MIPI_DSI_MODE_VIDEO |
+		MIPI_DSI_MODE_VIDEO_BURST |
+		MIPI_DSI_MODE_LPM |
+		MIPI_DSI_MODE_EOT_PACKET)>;
+		dsi,format = <MIPI_DSI_FMT_RGB888>;
+		dsi,lanes = <4>;
+		panel-init-sequence = [05 fa 01 11 39 00 04 b9 f1 12 83 39 00 06 b1 00 00 00 da 80 39 00 04 b2 00 13 70 39 00 0b b3 10 10 28 28 03 ff 00 00 00 00 15 00 02 b4 82 15 00 03 b5 07 07 15 00 03 b6 9c 9c 39 00 05 b8 2a 62 f0 60 39 00 1c ba 33 81 05 f9 0e 0e 20 00 00 00 00 00 00 00 44 25 00 90 0a 00 00 01 4f 01 00 00 37 39 00 02 bc 47 39 00 04 bf 02 11 00 39 00 0a c0 73 73 50 50 00 00 12 70 00 39 00 0d c1 25 c0 32 32 77 e4 ff ff cc cc 77 77 39 00 07 c6 82 00 bf ff 00 ff 39 00 07 c7 b8 00 0a 00 00 00 39 00 05 c8 10 40 1e 02 39 00 02 cc 0b 39 00 23 e0 00 07 0d 37 35 3f 41 44 06 0c 0d 0f 11 10 12 14 1a 00 07 0d 37 35 3f 41 44 06 0c 0d 0f 11 10 12 14 1a 39 00 0f e3 07 07 0b 0b 0b 0b 00 00 00 00 ff 00 c0 10 39 00 40 e9 c8 10 0a 00 00 f0 08 12 31 23 4f 86 f0 08 47 08 00 00 10 00 00 00 00 00 10 00 00 00 88 88 08 f8 f4 46 60 02 28 88 88 88 88 18 f8 f5 57 71 13 38 88 88 00 00 00 01 00 00 00 00 00 00 00 00 00 39 00 3e ea 00 1a 00 00 00 00 00 00 00 00 00 00 88 f8 18 f8 83 31 17 75 58 88 88 88 f8 08 f8 82 20 06 64 48 88 88 23 00 00 03 f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 39 00 04 ef ff ff 01 05 32 01 29];
+		panel-exit-sequence = <0x5000128 0x5000110>;
+		
+		display-timings {
+			native-mode = <&timing0>;
+			
+			// 30.00MHz / (640+120+120+120)×(480+16+4+14) = 1000×514 = 58.59 Hz
+			timing0: original {
+				clock-frequency = <30000000>;
+				hactive = <640>;
+				vactive = <480>;
+				hfront-porch = <120>;
+				hsync-len = <120>;
+				hback-porch = <120>;
+				vfront-porch = <16>;
+				vsync-len = <4>;
+				vback-porch = <12>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+			
+			// 30.00MHz / (640+120+120+120)×(480+8+4+8) = 1000×502 = 60.00 Hz
+			timing1: adjust {
+				clock-frequency = <30000000>;
+				hactive = <640>;
+				vactive = <480>;
+				hfront-porch = <120>;
+				hsync-len = <120>;
+				hback-porch = <120>;
+				vfront-porch = <8>;
+				vsync-len = <4>;
+				vback-porch = <8>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+	};
+};

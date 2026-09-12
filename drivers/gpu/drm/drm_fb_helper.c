@@ -481,6 +481,48 @@ int drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper)
 }
 EXPORT_SYMBOL(drm_fb_helper_restore_fbdev_mode_unlocked);
 
+/**
+ * drm_fb_helper_update_mode - update the cached mode of a fbdev crtc
+ * @dev: DRM device
+ * @crtc: CRTC whose cached fbdev mode should be updated
+ * @mode: new mode to cache
+ *
+ * Replaces the mode that the fbdev emulation re-applies on VT switch,
+ * lastclose, blanking and PM resume. Without this, modesets performed
+ * by kernel code (e.g. panel timing overrides) are reverted to the
+ * initial configuration as soon as fbcon restores its saved mode.
+ *
+ * The caller must hold the modeset locks, and @mode must not outlive
+ * the fbdev helper (the mode is duplicated internally).
+ */
+void drm_fb_helper_update_mode(struct drm_device *dev,
+			       struct drm_crtc *crtc,
+			       struct drm_display_mode *mode)
+{
+	struct drm_fb_helper *helper;
+
+	list_for_each_entry(helper, &kernel_fb_helper_list, kernel_fb_list) {
+		int i;
+
+		if (helper->dev != dev)
+			continue;
+
+		for (i = 0; i < helper->crtc_count; i++) {
+			struct drm_fb_helper_crtc *fb_crtc =
+				&helper->crtc_info[i];
+			struct drm_mode_set *mode_set = &fb_crtc->mode_set;
+
+			if (mode_set->crtc != crtc)
+				continue;
+
+			if (mode_set->mode)
+				drm_mode_destroy(dev, mode_set->mode);
+			mode_set->mode = drm_mode_duplicate(dev, mode);
+		}
+	}
+}
+EXPORT_SYMBOL(drm_fb_helper_update_mode);
+
 static bool drm_fb_helper_is_bound(struct drm_fb_helper *fb_helper)
 {
 	struct drm_device *dev = fb_helper->dev;

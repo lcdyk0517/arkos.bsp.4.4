@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/extcon.h>
 #include <linux/fb.h>
+#include <linux/fs.h>
 #include <linux/gpio.h>
 #include <linux/iio/consumer.h>
 #include <linux/iio/iio.h>
@@ -30,6 +31,11 @@
 #include <linux/wakelock.h>
 #include <linux/workqueue.h>
 #include <linux/gpio/consumer.h>
+#include <linux/uaccess.h>
+
+/* Userland persistence path for learned battery calibration anchors */
+#define HYBRID_CALIB_PATH	"/var/lib/rk817_battery_calib"
+#define HYBRID_CALIB_LOAD_TRIES	36	/* ~3 min at 5s work period */
 
 /* Hybrid mode (voltage + coulomb counting) constants */
 #define HYBRID_V_FULL_CHG_DEFAULT	4100
@@ -45,6 +51,11 @@
 #define HYBRID_MIN_RANGE_MV		100
 #define HYBRID_EMA_ALPHA_NUM		2
 #define HYBRID_EMA_ALPHA_DEN		10
+
+/* Full detection via small current at high voltage */
+#define HYBRID_FULL_CURR_THRESH_MA	150	/* current below this = near full */
+#define HYBRID_FULL_VOLT_THRESH_MV	4050	/* voltage must be above this */
+#define HYBRID_FULL_TIMEOUT_SEC		(20 * 60)	/* 20 min timeout at 99% */
 
 static int dbg_enable;
 struct rk817_battery_device;  /* 先前置声明结构体标签 */
@@ -254,8 +265,6 @@ enum rk817_battery_fields {
 	NEW_FCC_REG2, NEW_FCC_REG1, NEW_FCC_REG0,
 	RESET_MODE,
 	FG_INIT, HALT_CNT_REG, CALC_REST_REGL, UPDATE_LEVE_REG,
-	V_FULL_CHG_L, V_FULL_CHG_H,
-	V_FULL_DIS_L, V_FULL_DIS_H,
 	VOL_ADC_B3, VOL_ADC_B2, VOL_ADC_B1, VOL_ADC_B0,
 	VOL_ADC_K3, VOL_ADC_K2, VOL_ADC_K1, VOL_ADC_K0,
 	BAT_EXS, CHG_STS, BAT_OVP_STS, CHRG_IN_CLAMP,
@@ -412,10 +421,6 @@ static const struct reg_field rk817_battery_reg_fields[] = {
 	[HALT_CNT_REG] = REG_FIELD(0xA6, 0, 7),
 	[CALC_REST_REGL] = REG_FIELD(0xA7, 0, 7),
 	[UPDATE_LEVE_REG] = REG_FIELD(0xA8, 0, 7),
-	[V_FULL_CHG_L] = REG_FIELD(0xA4, 0, 7),
-	[V_FULL_CHG_H] = REG_FIELD(0xB1, 0, 7),
-	[V_FULL_DIS_L] = REG_FIELD(0xB2, 0, 7),
-	[V_FULL_DIS_H] = REG_FIELD(0xB3, 0, 7),
 
 	[VOL_ADC_B3] = REG_FIELD(0xA9, 0, 7),
 	[VOL_ADC_B2] = REG_FIELD(0xAA, 0, 7),
@@ -559,6 +564,9 @@ struct rk817_battery_device {
 	bool				hybrid_full_event;	/* full event active */
 	int64_t				hybrid_last_loop_sec;	/* last loop boottime */
 	bool				hybrid_first_run;	/* first iteration flag */
+	int64_t				hybrid_99_start_sec;	/* time when SOC first hit 99% */
+	bool				hybrid_map_loaded;	/* calib file load completed */
+	u8				hybrid_map_tries;	/* calib file load attempts */
 
 	/* Per-device state (formerly static locals) */
 	u32				save_cap_old;		/* for rk817_bat_save_cap */
@@ -777,21 +785,43 @@ static int64_t rk817_hybrid_boottime_sec(void)
 	return ts.tv_sec;
 }
 
+static int rk817_hybrid_file_write(struct rk817_battery_device *battery)
+{
+	struct file *fp;
+	mm_segment_t oldfs;
+	char buf[32];
+	int len, ret;
+
+	len = snprintf(buf, sizeof(buf), "%d %d\n",
+		       battery->hybrid_v_full_chg,
+		       battery->hybrid_v_full_dis);
+
+	fp = filp_open(HYBRID_CALIB_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (IS_ERR(fp))
+		return PTR_ERR(fp);
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = kernel_write(fp, buf, len, 0);
+	set_fs(oldfs);
+
+	filp_close(fp, NULL);
+
+	return (ret == len) ? 0 : (ret < 0 ? (int)ret : -EIO);
+}
+
 static void rk817_hybrid_save_map(struct rk817_battery_device *battery)
 {
-	u8 buf;
+	int ret;
 
-	/* Save V_FULL_CHG (2 bytes: high + low) */
-	buf = (battery->hybrid_v_full_chg >> 8) & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_CHG_H, buf);
-	buf = battery->hybrid_v_full_chg & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_CHG_L, buf);
+	ret = rk817_hybrid_file_write(battery);
+	if (ret) {
+		pr_err("hybrid: failed to save calib to %s (%d)\n",
+		       HYBRID_CALIB_PATH, ret);
+		return;
+	}
 
-	/* Save V_FULL_DIS (2 bytes: high + low) */
-	buf = (battery->hybrid_v_full_dis >> 8) & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_DIS_H, buf);
-	buf = battery->hybrid_v_full_dis & 0xFF;
-	rk817_bat_field_write(battery, V_FULL_DIS_L, buf);
+	battery->hybrid_map_loaded = true;
 
 	DBG("hybrid: saved vfull_chg=%d vfull_dis=%d\n",
 	    battery->hybrid_v_full_chg, battery->hybrid_v_full_dis);
@@ -799,15 +829,41 @@ static void rk817_hybrid_save_map(struct rk817_battery_device *battery)
 
 static void rk817_hybrid_load_map(struct rk817_battery_device *battery)
 {
+	struct file *fp;
+	mm_segment_t oldfs;
+	char buf[32];
+	ssize_t n;
 	int vchg, vdis;
 
-	/* Load V_FULL_CHG (2 bytes) */
-	vchg = (rk817_bat_field_read(battery, V_FULL_CHG_H) << 8) |
-		rk817_bat_field_read(battery, V_FULL_CHG_L);
+	if (battery->hybrid_map_loaded)
+		return;
 
-	/* Load V_FULL_DIS (2 bytes) */
-	vdis = (rk817_bat_field_read(battery, V_FULL_DIS_H) << 8) |
-		rk817_bat_field_read(battery, V_FULL_DIS_L);
+	if (++battery->hybrid_map_tries > HYBRID_CALIB_LOAD_TRIES) {
+		battery->hybrid_map_loaded = true;
+		return;
+	}
+
+	fp = filp_open(HYBRID_CALIB_PATH, O_RDONLY, 0);
+	if (IS_ERR(fp)) {
+		/* ENOENT: rootfs not mounted yet or never learned */
+		return;
+	}
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	n = kernel_read(fp, 0, buf, sizeof(buf) - 1);
+	set_fs(oldfs);
+
+	filp_close(fp, NULL);
+
+	battery->hybrid_map_loaded = true;
+
+	if (n <= 0)
+		return;
+
+	buf[n] = '\0';
+	if (sscanf(buf, "%d %d", &vchg, &vdis) != 2)
+		return;
 
 	/* Validate and apply */
 	if (vchg >= 3600 && vchg <= 4600) {
@@ -920,7 +976,8 @@ static void rk817_hybrid_calculate(struct rk817_battery_device *battery)
 	 * coulomb counter should be at FCC, and voltage calibration
 	 * should be allowed to correct any residual error.
 	 */
-	bool charging = (battery->chrg_status == CC_OR_CV_CHRG);
+	bool charging = (battery->chrg_status == CC_OR_CV_CHRG ||
+			 battery->chrg_status == CHARGE_FINISH);
 	bool status_full = (battery->chrg_status == CHARGE_FINISH);
 	bool peak_dwell, full_event, allow_100;
 	int64_t now_sec;
@@ -1114,8 +1171,44 @@ static void rk817_hybrid_calculate(struct rk817_battery_device *battery)
 		battery->hybrid_internal_soc = 100;
 
 	/* Step 7: Cap at 99% during charging until full event */
-	if (charging && !allow_100 && battery->hybrid_internal_soc > 99)
-		battery->hybrid_internal_soc = 99;
+	if (charging && !allow_100 && battery->hybrid_internal_soc > 99) {
+		/*
+		 * Additional conditions to allow 100% without waiting 15 min:
+		 * 1. Current is very small (CV phase, near termination)
+		 *    AND voltage is high enough
+		 * 2. Timeout: stuck at 99% for too long with small current
+		 */
+		bool curr_small = (battery->current_avg >= 0 &&
+				   battery->current_avg < HYBRID_FULL_CURR_THRESH_MA);
+		bool volt_high = (ema_mv >= HYBRID_FULL_VOLT_THRESH_MV);
+
+		if (curr_small && volt_high) {
+			/* Current is small and voltage is high - battery is full */
+			allow_100 = true;
+			HYBRID_DBG("hybrid: allow 100%%, curr=%d v=%d\n",
+				   battery->current_avg, ema_mv);
+		} else if (curr_small && battery->hybrid_internal_soc >= 99) {
+			/* Track how long we've been at 99% with small current */
+			int64_t now = rk817_hybrid_boottime_sec();
+
+			if (battery->hybrid_99_start_sec == 0)
+				battery->hybrid_99_start_sec = now;
+
+			if ((now - battery->hybrid_99_start_sec) >= HYBRID_FULL_TIMEOUT_SEC) {
+				allow_100 = true;
+				HYBRID_DBG("hybrid: allow 100%%, timeout %llds curr=%d\n",
+					   now - battery->hybrid_99_start_sec,
+					   battery->current_avg);
+			}
+		}
+
+		if (!allow_100)
+			battery->hybrid_internal_soc = 99;
+	}
+
+	/* Reset 99% timer when not at 99% */
+	if (battery->hybrid_internal_soc < 99)
+		battery->hybrid_99_start_sec = 0;
 
 	/* Step 8: Step-limit for display */
 	battery->hybrid_visible_soc = rk817_hybrid_step_limit(
@@ -1848,7 +1941,7 @@ static int rk817_bat_get_charge_status(struct rk817_battery_device *battery)
 		 battery->voltage_avg, battery->current_avg);
 
 	if (status == CC_OR_CV_CHRG) {
-		if (battery->rsoc == MAX_PERCENTAGE) {
+		if (battery->rsoc >= 100) {
 			DBG("charge to finish\n");
 			status = CHARGE_FINISH;
 		}
@@ -3035,6 +3128,8 @@ static void rk817_battery_work(struct work_struct *work)
 
 	rk817_bat_update_fg_info(battery);
 
+	rk817_hybrid_load_map(battery);
+
 	rk817_hybrid_calculate(battery);
 
 	rk817_bat_update_fcc(battery);
@@ -3210,9 +3305,11 @@ static int rk817_battery_probe(struct platform_device *pdev)
 	battery->hybrid_full_event = false;
 	battery->hybrid_last_loop_sec = rk817_hybrid_boottime_sec();
 	battery->hybrid_first_run = true;
+	battery->hybrid_99_start_sec = 0;
 
-	/* Load learned voltage anchors from persistent storage */
-	rk817_hybrid_load_map(battery);
+	/* Calib file is lazy-loaded from rk817_battery_work once rootfs is up */
+	battery->hybrid_map_loaded = false;
+	battery->hybrid_map_tries = 0;
 
 	BAT_INFO("hybrid mode: vfull_chg=%d vfull_dis=%d "
 		 "vempty_chg=%d vempty_dis=%d\n",
@@ -3362,12 +3459,10 @@ static int rk817_bat_pm_resume(struct device *dev)
 	interval_sec = rk817_bat_rtc_sleep_sec(battery);
 	battery->sleep_sum_sec += interval_sec;
 
-	/* Hybrid mode: gap detection in hybrid_calculate will
-	 * trigger voltage calibration on the first work cycle.
-	 * Reset visible_soc so the first work cycle snaps to
-	 * the current value instead of stepping +1% at a time.
+	/* Hybrid mode: resume后直接用coulomb counter的值，
+	 * 不走step-limit，避免休眠期间充满电却显示99%
 	 */
-	battery->hybrid_visible_soc = -1;
+	battery->hybrid_first_run = true;
 	BAT_INFO("resume: interval=%ds v=%d\n",
 		 interval_sec, battery->voltage_avg);
 

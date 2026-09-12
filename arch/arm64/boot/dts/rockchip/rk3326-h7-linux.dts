@@ -26,13 +26,13 @@
 	gpio_keys: odroidgo3-keys {
 		compatible = "gpio-keys";
 		autorepeat;
-
+		
 		button_vol_up: button-vol-up {
 			gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_LOW>;
 			label = "GPIO BTN-VOLUP";
 			linux,code = <KEY_VOLUMEUP>;
 		};
-
+		
 		button_vol_down: button-vol-down {
 			gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>;
 			label = "GPIO BTN-VOLDN";
@@ -42,7 +42,7 @@
 	
 	joypad: odroidgo3-joypad {
 		compatible = "odroidgo3-joypad";
-
+		
 		joypad-name = "GO-Super Gamepad";
 		joypad-product = <0x1100>;
 		joypad-revision = <0x0100>;
@@ -53,25 +53,31 @@
 		pinctrl-0 = <&btn_pins>;
 		/* JOY_X, JOY_Y Channel define */
 		io-channel-names = "joy_y", "joy_x";
-        io-channels = <&saradc 2>,<&saradc 1>;
+		io-channels = <&saradc 2>,<&saradc 1>;
 		/* adc channel count */
 		button-adc-count = <2>;
 		/* adc calculate scale */
-		button-adc-scale = <2>;
-
+		button-adc-scale = <64>;
+		
 		/* adc deadzone range  */
 		button-adc-deadzone = <20>;
-
+		
 		/*
-		  specifies fuzz value that is used to filter noise from
-		  the event stream.
+		specifies fuzz value that is used to filter noise from
+		the event stream.
 		*/
 		button-adc-fuzz = <32>;
 		button-adc-flat = <32>;
-
+		
+		abs_x-p-tuning = <200>;
+		abs_x-n-tuning = <200>;
+		
+		abs_y-p-tuning = <200>;
+		abs_y-n-tuning = <200>;
+		
 		/* poll device interval (ms), adc read interval */
 		poll-interval = <10>;
-		
+		stick-switch-key = <BTN_TRIGGER_HAPPY5>;
 		sw1 {
 			gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_LOW>;
 			label = "GPIO DPAD-UP";
@@ -249,7 +255,7 @@
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 	};
-
+	
 	wireless_wlan: wireless-wlan {
 		compatible = "wlan-platdata";
 		wifi_chip_type = "rk915";
@@ -342,25 +348,10 @@
 		panel-exit-sequence = <0x5000128 0x5000110>;
 		
 		display-timings {
-			native-mode = <&timing1>;
+			native-mode = <&timing0>;
 			
-			timing0: adjust {
-				clock-frequency = <62000000>;
-				hactive = <1024>;
-				vactive = <768>;
-				hfront-porch = <90>;
-				hsync-len = <80>;
-				hback-porch = <80>;
-				vfront-porch = <16>;
-				vsync-len = <8>;
-				vback-porch = <19>;
-				hsync-active = <0>;
-				vsync-active = <0>;
-				de-active = <0>;
-				pixelclk-active = <0>;
-			};
-
-			timing1: origin {
+			// 62.00MHz / (1024+90+80+80)×(768+16+8+8) = 1274×800 = 60.83 Hz
+			timing0: original {
 				clock-frequency = <62000000>;
 				hactive = <1024>;
 				vactive = <768>;
@@ -370,6 +361,23 @@
 				vfront-porch = <16>;
 				vsync-len = <8>;
 				vback-porch = <8>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+			
+			// 62.00MHz / (1024+90+80+80)×(768+16+8+19) = 1274×811 = 60.01 Hz
+			timing1: adjust {
+				clock-frequency = <62000000>;
+				hactive = <1024>;
+				vactive = <768>;
+				hfront-porch = <90>;
+				hsync-len = <80>;
+				hback-porch = <80>;
+				vfront-porch = <16>;
+				vsync-len = <8>;
+				vback-porch = <19>;
 				hsync-active = <0>;
 				vsync-active = <0>;
 				de-active = <0>;
@@ -620,7 +628,7 @@
 				regulator-boot-on;
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <3300000>;
-
+				
 				regulator-name = "vcc2v8_dvp";
 				regulator-state-mem {
 					regulator-on-in-suspend;

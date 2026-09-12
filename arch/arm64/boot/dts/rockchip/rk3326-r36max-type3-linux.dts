@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* 稀范科技 R36Max Type3
+*
+*/
+
+/dts-v1/;
+#include "rk3326-r36max-type1-linux.dts"
+
+&rk817_codec {
+    /delete-property/ spk-ctl-gpios;
+    /delete-property/ spk-mute-delay-ms;
+    /delete-property/ use-ext-amplifier;
+};

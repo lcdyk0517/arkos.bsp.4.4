@@ -70,3 +70,4 @@ obj-$(CONFIG_RTL8821CU) += rtl8821cu/
 obj-$(CONFIG_RTL8723BU) += ew-7611ulb/
 obj-$(CONFIG_ESP8089) += esp8089/
 obj-$(CONFIG_WLAN_VENDOR_SWT6621S) += swt6621s_wifi/
+obj-$(CONFIG_RTL8192EU) += rtl8192eu/

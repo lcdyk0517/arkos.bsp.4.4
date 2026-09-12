@@ -227,7 +227,7 @@
 	leds: arkos4clone-leds {
 		compatible = "arkos4clone-led";
 		
-		led-blue = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
+		led-blue = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>;
 		joy-left = <&gpio2 RK_PA3 GPIO_ACTIVE_HIGH>;
 		joy-right = <&gpio2 RK_PA4 GPIO_ACTIVE_HIGH>;
 	};
@@ -338,7 +338,8 @@
 		display-timings {
 			native-mode = <&timing0>;
 			
-			timing0: origin {
+			// 33.00MHz / (640+120+2+120)×(480+18+2+20) = 882×520 = 71.95 Hz
+			timing0: original {
 				clock-frequency = <33000000>;
 				hactive = <640>;
 				vactive = <480>;

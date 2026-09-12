@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+* Copyright (c) 2025 kk&lcdyk
+*
+* R36S Clone掌机 种类2
+*
+*/
+
+/dts-v1/;
+#include "rk3326-r36s-type2-panel1-linux.dts"
+
+&rk817_codec {
+	spk-ctl-gpios = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;
+	spk-mute-delay-ms = <50>;
+	use-ext-amplifier;
+};
