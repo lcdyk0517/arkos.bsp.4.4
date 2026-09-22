@@ -38,7 +38,7 @@ int usbctrl_vendorreq(struct intf_hdl *pintfhdl, u8 request, u16 value, u16 inde
 	u8 *pIo_buf;
 	int vendorreq_times = 0;
 
-#if (defined(CONFIG_RTL8822B) || defined(CONFIG_RTL8821C))
+#if (defined(CONFIG_RTL8822B) || defined(CONFIG_RTL8821C)) || defined(CONFIG_RTL8822C)
 #define REG_ON_SEC 0x00
 #define REG_OFF_SEC 0x01
 #define REG_LOCAL_SEC 0x02
@@ -115,8 +115,25 @@ int usbctrl_vendorreq(struct intf_hdl *pintfhdl, u8 request, u16 value, u16 inde
 				_rtw_memcpy(pdata, pIo_buf,  len);
 			}
 		} else { /* error cases */
-			RTW_INFO("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d\n"
-				, value, (requesttype == 0x01) ? "read" : "write" , len, status, *(u32 *)pdata, vendorreq_times);
+			switch (len) {
+				case 1:
+					RTW_INFO("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d\n"
+						, value, (requesttype == 0x01) ? "read" : "write" , len, status, *(u8 *)pdata, vendorreq_times);
+				break;
+				case 2:
+					RTW_INFO("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d\n"
+						, value, (requesttype == 0x01) ? "read" : "write" , len, status, *(u16 *)pdata, vendorreq_times);
+				break;
+				case 4:
+					RTW_INFO("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d\n"
+						, value, (requesttype == 0x01) ? "read" : "write" , len, status, *(u32 *)pdata, vendorreq_times);
+				break;
+				default:
+					RTW_INFO("reg 0x%x, usb %s %u fail, status:%d, vendorreq_times:%d\n"
+						, value, (requesttype == 0x01) ? "read" : "write" , len, status, vendorreq_times);
+				break;
+				
+			}
 
 			if (status < 0) {
 				if (status == (-ESHUTDOWN)	|| status == -ENODEV)
@@ -151,9 +168,9 @@ int usbctrl_vendorreq(struct intf_hdl *pintfhdl, u8 request, u16 value, u16 inde
 
 	}
 
-#if (defined(CONFIG_RTL8822B) || defined(CONFIG_RTL8821C))
+#if (defined(CONFIG_RTL8822B) || defined(CONFIG_RTL8821C)) || defined(CONFIG_RTL8822C)
 	if (value < 0xFE00) {
-		if (0x00 <= value && value <= 0xff)
+		if (value <= 0xff)
 			current_reg_sec = REG_ON_SEC;
 		else if (0x1000 <= value && value <= 0x10ff)
 			current_reg_sec = REG_ON_SEC;
@@ -276,15 +293,20 @@ unsigned int ffaddr2pipehdl(struct dvobj_priv *pdvobj, u32 addr)
 	else if (addr == RECV_INT_IN_ADDR)
 		pipe = usb_rcvintpipe(pusbd, pdvobj->RtInPipe[1]);
 
-	else if (addr < HW_QUEUE_ENTRY) {
 #ifdef RTW_HALMAC
-		/* halmac already translate queue id to bulk out id */
-		ep_num = pdvobj->RtOutPipe[addr];
+         /* halmac already translate queue id to bulk out id (addr 0~3) */
+		 /* 8814BU bulk out id range is 0~6 */
+        else if (addr < MAX_BULKOUT_NUM) {
+                ep_num = pdvobj->RtOutPipe[addr];
+                pipe = usb_sndbulkpipe(pusbd, ep_num);
+        }
 #else
-		ep_num = pdvobj->Queue2Pipe[addr];
+        else if (addr < HW_QUEUE_ENTRY) {
+                ep_num = pdvobj->Queue2Pipe[addr];
+                pipe = usb_sndbulkpipe(pusbd, ep_num);
+        }
 #endif
-		pipe = usb_sndbulkpipe(pusbd, ep_num);
-	}
+
 
 	return pipe;
 }
@@ -295,7 +317,7 @@ struct zero_bulkout_context {
 	void *pirp;
 	void *padapter;
 };
-
+#if 0
 static void usb_bulkout_zero_complete(struct urb *purb, struct pt_regs *regs)
 {
 	struct zero_bulkout_context *pcontext = (struct zero_bulkout_context *)purb->context;
@@ -371,7 +393,7 @@ static u32 usb_bulkout_zero(struct intf_hdl *pintfhdl, u32 addr)
 	return _SUCCESS;
 
 }
-
+#endif
 void usb_read_mem(struct intf_hdl *pintfhdl, u32 addr, u32 cnt, u8 *rmem)
 {
 
@@ -388,11 +410,12 @@ void usb_read_port_cancel(struct intf_hdl *pintfhdl)
 	int i;
 	struct recv_buf *precvbuf;
 	_adapter	*padapter = pintfhdl->padapter;
+	struct registry_priv *regsty = adapter_to_regsty(padapter);
 	precvbuf = (struct recv_buf *)padapter->recvpriv.precv_buf;
 
 	RTW_INFO("%s\n", __func__);
 
-	for (i = 0; i < NR_RECVBUFF ; i++) {
+	for (i = 0; i < regsty->recvbuf_nr ; i++) {
 
 		if (precvbuf->purb)	 {
 			/* RTW_INFO("usb_read_port_cancel : usb_kill_urb\n"); */
@@ -867,6 +890,10 @@ void usb_recv_tasklet(void *priv)
 	_adapter		*padapter = (_adapter *)priv;
 	struct recv_priv	*precvpriv = &padapter->recvpriv;
 	struct recv_buf	*precvbuf = NULL;
+#ifdef CONFIG_USB_PROTECT_RX_CLONED_SKB
+	u8 cloned_skb_num;
+	u8 need_sche = _FALSE;
+#endif
 
 	while (NULL != (pskb = skb_dequeue(&precvpriv->rx_skb_queue))) {
 
@@ -877,22 +904,60 @@ void usb_recv_tasklet(void *priv)
 			#ifdef CONFIG_PREALLOC_RX_SKB_BUFFER
 			if (rtw_free_skb_premem(pskb) != 0)
 			#endif /* CONFIG_PREALLOC_RX_SKB_BUFFER */
-				rtw_skb_free(pskb);
-			break;
+			{
+				skb_reset_tail_pointer(pskb);
+				pskb->len = 0;
+				skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+			}
+			continue;
 		}
 
 		recvbuf2recvframe(padapter, pskb);
 
-		skb_reset_tail_pointer(pskb);
-		pskb->len = 0;
+#ifdef CONFIG_USB_PROTECT_RX_CLONED_SKB
+		if (skb_cloned(pskb)) {
+			skb_queue_tail(&precvpriv->rx_cloned_skb_queue, pskb);
+			need_sche = _TRUE;
+		} else
+#endif
+		{
+			skb_reset_tail_pointer(pskb);
+			pskb->len = 0;
+			skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
 
-		skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
-
-		precvbuf = rtw_dequeue_recvbuf(&precvpriv->recv_buf_pending_queue);
-		if (NULL != precvbuf) {
-			precvbuf->pskb = NULL;
-			rtw_read_port(padapter, precvpriv->ff_hwaddr, 0, (unsigned char *)precvbuf);
+			precvbuf = rtw_dequeue_recvbuf(&precvpriv->recv_buf_pending_queue);
+			if (NULL != precvbuf) {
+				precvbuf->pskb = NULL;
+				rtw_read_port(padapter, precvpriv->ff_hwaddr, 0, (unsigned char *)precvbuf);
+			}
 		}
+	}
+
+#ifdef CONFIG_USB_PROTECT_RX_CLONED_SKB
+	cloned_skb_num = skb_queue_len(&precvpriv->rx_cloned_skb_queue);
+	while (cloned_skb_num--) {
+		pskb = skb_dequeue(&precvpriv->rx_cloned_skb_queue);
+		if (skb_cloned(pskb)) {
+			skb_queue_tail(&precvpriv->rx_cloned_skb_queue, pskb);
+			need_sche = _TRUE;
+		} else {
+			skb_reset_tail_pointer(pskb);
+			pskb->len = 0;
+			skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+
+			precvbuf = rtw_dequeue_recvbuf(&precvpriv->recv_buf_pending_queue);
+			if (NULL != precvbuf) {
+				precvbuf->pskb = NULL;
+				rtw_read_port(padapter, precvpriv->ff_hwaddr, 0, (unsigned char *)precvbuf);
+			}
+		}
+	}
+
+	if (need_sche)
+		tasklet_schedule(&precvpriv->recv_tasklet);
+#endif
+	if (RTW_CANNOT_RUN(padapter)) {
+			while (rtw_dequeue_recvbuf(&precvpriv->recv_buf_pending_queue));
 	}
 }
 

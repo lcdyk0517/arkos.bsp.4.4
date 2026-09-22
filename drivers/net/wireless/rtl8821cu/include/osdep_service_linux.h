@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/namei.h>
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 5))
 	#include <linux/kref.h>
 #endif
@@ -54,6 +55,10 @@
 #include <linux/kthread.h>
 #include <linux/list.h>
 #include <linux/vmalloc.h>
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+	#include <uapi/linux/sched/types.h>
+#endif
 
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 5, 41))
 	#include <linux/tqueue.h>
@@ -91,12 +96,12 @@
 #ifdef CONFIG_IOCTL_CFG80211
 	/*	#include <linux/ieee80211.h> */
 	#include <net/cfg80211.h>
+#else
+	#ifdef CONFIG_REGD_SRC_FROM_OS
+	#error "CONFIG_REGD_SRC_FROM_OS requires CONFIG_IOCTL_CFG80211"
+	#endif
 #endif /* CONFIG_IOCTL_CFG80211 */
 
-#ifdef CONFIG_TCP_CSUM_OFFLOAD_TX
-	#include <linux/in.h>
-	#include <linux/udp.h>
-#endif
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	#include <linux/earlysuspend.h>
@@ -125,11 +130,6 @@
 
 #ifdef CONFIG_USB_HCI
 	typedef struct urb   *PURB;
-	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22))
-		#ifdef CONFIG_USB_SUSPEND
-			#define CONFIG_AUTOSUSPEND	1
-		#endif
-	#endif
 #endif
 
 #if defined(CONFIG_RTW_GRO) && (!defined(CONFIG_RTW_NAPI))
@@ -210,6 +210,10 @@ typedef void	*thread_context;
 typedef void timer_hdl_return;
 typedef void *timer_hdl_context;
 
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 16, 0))
+#define from_timer     timer_container_of
+#endif
+
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 41))
 	typedef struct work_struct _workitem;
 #else
@@ -221,6 +225,8 @@ typedef void *timer_hdl_context;
 #endif
 
 typedef unsigned long systime;
+typedef ktime_t sysptime;
+typedef struct tasklet_struct _tasklet;
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22))
 /* Porting from linux kernel, for compatible with old kernel. */
@@ -385,7 +391,20 @@ __inline static void _set_timer(_timer *ptimer, u32 delay_time)
 
 __inline static void _cancel_timer(_timer *ptimer, u8 *bcancelled)
 {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+	*bcancelled = timer_delete_sync(&ptimer->timer) == 1 ? 1 : 0;
+#else
 	*bcancelled = del_timer_sync(&ptimer->timer) == 1 ? 1 : 0;
+#endif
+}
+
+__inline static void _cancel_timer_async(_timer *ptimer)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+	timer_delete(&ptimer->timer);
+#else
+	del_timer(&ptimer->timer);
+#endif
 }
 
 static inline void _init_workitem(_workitem *pwork, void *pfunc, void *cntx)
@@ -537,7 +556,21 @@ struct rtw_netdev_priv_indicator {
 struct net_device *rtw_alloc_etherdev_with_old_priv(int sizeof_priv, void *old_priv);
 extern struct net_device *rtw_alloc_etherdev(int sizeof_priv);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24))
+#define rtw_get_same_net_ndev_by_name(ndev, name) dev_get_by_name(name)
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26))
+#define rtw_get_same_net_ndev_by_name(ndev, name) dev_get_by_name(ndev->nd_net, name)
+#else
+#define rtw_get_same_net_ndev_by_name(ndev, name) dev_get_by_name(dev_net(ndev), name)
+#endif
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24))
+#define rtw_get_bridge_ndev_by_name(name) dev_get_by_name(name)
+#else
+#define rtw_get_bridge_ndev_by_name(name) dev_get_by_name(&init_net, name)
+#endif
+
 #define STRUCT_PACKED __attribute__ ((packed))
 
 
-#endif
+#endif /* __OSDEP_LINUX_SERVICE_H_ */

@@ -17,7 +17,10 @@
 #ifdef __KERNEL__
 	#include <linux/if_arp.h>
 	#include <net/ip.h>
+	#include <linux/version.h>
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 	#include <net/ipx.h>
+#endif
 	#include <linux/atalk.h>
 	#include <linux/udp.h>
 	#include <linux/if_pppox.h>
@@ -81,7 +84,7 @@
 
 
 /* Find a tag in pppoe frame and return the pointer */
-static __inline__ unsigned char *__nat25_find_pppoe_tag(struct pppoe_hdr *ph, unsigned short type)
+static unsigned char *__nat25_find_pppoe_tag(struct pppoe_hdr *ph, unsigned short type)
 {
 	unsigned char *cur_ptr, *start_ptr;
 	unsigned short tagLen, tagType;
@@ -99,7 +102,7 @@ static __inline__ unsigned char *__nat25_find_pppoe_tag(struct pppoe_hdr *ph, un
 }
 
 
-static __inline__ int __nat25_add_pppoe_tag(struct sk_buff *skb, struct pppoe_tag *tag)
+static int __nat25_add_pppoe_tag(struct sk_buff *skb, struct pppoe_tag *tag)
 {
 	struct pppoe_hdr *ph = (struct pppoe_hdr *)(skb->data + ETH_HLEN);
 	int data_len;
@@ -139,7 +142,7 @@ static int skb_pull_and_merge(struct sk_buff *skb, unsigned char *src, int len)
 	return 0;
 }
 
-static __inline__ unsigned long __nat25_timeout(_adapter *priv)
+static unsigned long __nat25_timeout(_adapter *priv)
 {
 	unsigned long timeout;
 
@@ -149,7 +152,7 @@ static __inline__ unsigned long __nat25_timeout(_adapter *priv)
 }
 
 
-static __inline__ int  __nat25_has_expired(_adapter *priv,
+static int  __nat25_has_expired(_adapter *priv,
 		struct nat25_network_db_entry *fdb)
 {
 	if (time_before_eq(fdb->ageing_timer, __nat25_timeout(priv)))
@@ -159,7 +162,7 @@ static __inline__ int  __nat25_has_expired(_adapter *priv,
 }
 
 
-static __inline__ void __nat25_generate_ipv4_network_addr(unsigned char *networkAddr,
+static void __nat25_generate_ipv4_network_addr(unsigned char *networkAddr,
 		unsigned int *ipAddr)
 {
 	memset(networkAddr, 0, MAX_NETWORK_ADDR_LEN);
@@ -169,7 +172,8 @@ static __inline__ void __nat25_generate_ipv4_network_addr(unsigned char *network
 }
 
 
-static __inline__ void __nat25_generate_ipx_network_addr_with_node(unsigned char *networkAddr,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+static void __nat25_generate_ipx_network_addr_with_node(unsigned char *networkAddr,
 		unsigned int *ipxNetAddr, unsigned char *ipxNodeAddr)
 {
 	memset(networkAddr, 0, MAX_NETWORK_ADDR_LEN);
@@ -180,7 +184,7 @@ static __inline__ void __nat25_generate_ipx_network_addr_with_node(unsigned char
 }
 
 
-static __inline__ void __nat25_generate_ipx_network_addr_with_socket(unsigned char *networkAddr,
+static void __nat25_generate_ipx_network_addr_with_socket(unsigned char *networkAddr,
 		unsigned int *ipxNetAddr, unsigned short *ipxSocketAddr)
 {
 	memset(networkAddr, 0, MAX_NETWORK_ADDR_LEN);
@@ -191,7 +195,7 @@ static __inline__ void __nat25_generate_ipx_network_addr_with_socket(unsigned ch
 }
 
 
-static __inline__ void __nat25_generate_apple_network_addr(unsigned char *networkAddr,
+static void __nat25_generate_apple_network_addr(unsigned char *networkAddr,
 		unsigned short *network, unsigned char *node)
 {
 	memset(networkAddr, 0, MAX_NETWORK_ADDR_LEN);
@@ -200,9 +204,10 @@ static __inline__ void __nat25_generate_apple_network_addr(unsigned char *networ
 	memcpy(networkAddr + 1, (unsigned char *)network, 2);
 	networkAddr[3] = *node;
 }
+#endif
 
 
-static __inline__ void __nat25_generate_pppoe_network_addr(unsigned char *networkAddr,
+static void __nat25_generate_pppoe_network_addr(unsigned char *networkAddr,
 		unsigned char *ac_mac, unsigned short *sid)
 {
 	memset(networkAddr, 0, MAX_NETWORK_ADDR_LEN);
@@ -322,7 +327,7 @@ static void convert_ipv6_mac_to_mc(struct sk_buff *skb)
 #endif /* SUPPORT_RX_UNI2MCAST */
 
 
-static __inline__ int __nat25_network_hash(unsigned char *networkAddr)
+static int __nat25_network_hash(unsigned char *networkAddr)
 {
 	if (networkAddr[0] == NAT25_IPV4) {
 		unsigned long x;
@@ -330,6 +335,7 @@ static __inline__ int __nat25_network_hash(unsigned char *networkAddr)
 		x = networkAddr[7] ^ networkAddr[8] ^ networkAddr[9] ^ networkAddr[10];
 
 		return x & (NAT25_HASH_SIZE - 1);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 	} else if (networkAddr[0] == NAT25_IPX) {
 		unsigned long x;
 
@@ -343,6 +349,7 @@ static __inline__ int __nat25_network_hash(unsigned char *networkAddr)
 		x = networkAddr[1] ^ networkAddr[2] ^ networkAddr[3];
 
 		return x & (NAT25_HASH_SIZE - 1);
+#endif
 	} else if (networkAddr[0] == NAT25_PPPOE) {
 		unsigned long x;
 
@@ -374,7 +381,7 @@ static __inline__ int __nat25_network_hash(unsigned char *networkAddr)
 }
 
 
-static __inline__ void __network_hash_link(_adapter *priv,
+static void __network_hash_link(_adapter *priv,
 		struct nat25_network_db_entry *ent, int hash)
 {
 	/* Caller must _enter_critical_bh already! */
@@ -391,7 +398,7 @@ static __inline__ void __network_hash_link(_adapter *priv,
 }
 
 
-static __inline__ void __network_hash_unlink(struct nat25_network_db_entry *ent)
+static void __network_hash_unlink(struct nat25_network_db_entry *ent)
 {
 	/* Caller must _enter_critical_bh already! */
 	/* _irqL irqL; */
@@ -889,6 +896,7 @@ int nat25_db_handle(_adapter *priv, struct sk_buff *skb, int method)
 		}
 	}
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 	/*---------------------------------------------------*/
 	/*         Handle IPX and Apple Talk frame          */
 	/*---------------------------------------------------*/
@@ -1109,6 +1117,7 @@ int nat25_db_handle(_adapter *priv, struct sk_buff *skb, int method)
 
 		return -1;
 	}
+#endif
 
 	/*---------------------------------------------------*/
 	/*                Handle PPPoE frame                */
