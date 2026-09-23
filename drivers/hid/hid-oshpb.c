@@ -6,12 +6,15 @@
  * The original device is a USB HID gamepad (VID:1209 PID:3100) with
  * analog sticks in 0-4095 range. This driver intercepts the raw HID
  * reports, remaps axes/buttons to match odroidgo3-joypad, and applies
- * runtime-adjustable tuning values and PWM rumble.
+ * runtime-adjustable tuning values, optional per-report axis spike filter,
+ * runtime button swap (swap_ab/swap_xy) and PWM rumble.
  */
 
 #include <linux/hid.h>
 #include <linux/input.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/pwm.h>
@@ -46,6 +49,12 @@ struct oshpb_button {
 	int linux_code;		/* evdev code (BTN_EAST, etc.) */
 };
 
+/* per-axis glitch filter state */
+struct oshpb_axis {
+	int reported;		/* last value passed to the input layer */
+	int prev;		/* previous sample, accepted or dropped */
+};
+
 struct oshpb_device {
 	struct hid_device *hdev;
 	struct input_dev *input;
@@ -61,6 +70,15 @@ struct oshpb_device {
 
 	/* scale factor */
 	int scale;
+
+	/* per-report axis glitch filter (0 = off) */
+	int max_step;
+	struct oshpb_axis ax_lx, ax_ly, ax_rx, ax_ry;
+
+	/* button swap: 0 = as-is, 1 = swap */
+	int swap_ab;			/* BTN_EAST <-> BTN_SOUTH */
+	int swap_xy;			/* BTN_WEST <-> BTN_NORTH */
+	struct mutex swap_lock;		/* serializes swap sysfs stores */
 
 	/* debug: log first N reports */
 	int debug_count;
@@ -166,6 +184,75 @@ static int oshpb_rumble_setup(struct hid_device *hdev, struct oshpb_device *oshp
 	return 0;
 }
 
+/* ---- Button swap and slew limit helpers ---- */
+
+/*
+ * swap_ab: A<->B (BTN_EAST <-> BTN_SOUTH), swap_xy: X<->Y (BTN_WEST <-> BTN_NORTH).
+ * Unrelated codes pass through unchanged. Used for report remapping and
+ * capability registration.
+ */
+static int oshpb_swap_ab_code(int code)
+{
+	switch (code) {
+	case BTN_EAST:	return BTN_SOUTH;
+	case BTN_SOUTH:	return BTN_EAST;
+	default:	return code;
+	}
+}
+
+static int oshpb_swap_xy_code(int code)
+{
+	switch (code) {
+	case BTN_WEST:	return BTN_NORTH;
+	case BTN_NORTH:	return BTN_WEST;
+	default:	return code;
+	}
+}
+
+/*
+ * oshpb_remap_button() - remap a key code per the current swap settings.
+ *
+ * raw_event reads the flags lock-free, paired with WRITE_ONCE in the
+ * sysfs store path.
+ */
+static int oshpb_remap_button(struct oshpb_device *oshpb, int code)
+{
+	if (READ_ONCE(oshpb->swap_ab))
+		code = oshpb_swap_ab_code(code);
+	if (READ_ONCE(oshpb->swap_xy))
+		code = oshpb_swap_xy_code(code);
+	return code;
+}
+
+/**
+ * oshpb_axis_filter() - reject single-sample spikes larger than max_step.
+ * @axis: per-axis filter state
+ * @sample: new raw sample (output value units)
+ * @max_step: maximum plausible change per report
+ *
+ * A sample deviating more than max_step from BOTH the last reported value
+ * and the previous sample is an isolated glitch and is dropped: the last
+ * reported value is held instead. A sample that stays far away on the next
+ * report too (i.e. deviates from the previous sample by at most max_step)
+ * is real stick movement and is accepted at once, so the stick can still
+ * travel its full range at any speed.
+ *
+ * Return: the value to report this time.
+ */
+static int oshpb_axis_filter(struct oshpb_axis *axis, int sample, int max_step)
+{
+	int delta_rep = abs(sample - axis->reported);
+	int delta_prev = abs(sample - axis->prev);
+
+	axis->prev = sample;
+
+	if (delta_rep > max_step && delta_prev > max_step)
+		return axis->reported;	/* spike: drop, hold last value */
+
+	axis->reported = sample;
+	return sample;
+}
+
 /* ---- HID raw event handler ---- */
 
 /*
@@ -268,6 +355,22 @@ static int oshpb_raw_event(struct hid_device *hdev, struct hid_report *report,
 		ry *= oshpb->scale;
 	}
 
+	/*
+	 * Spike filter (optional, DTS: button-adc-max-step, output value
+	 * units). Drops single samples jumping more than max_step away from
+	 * both the last reported value and the previous sample — typical ADC
+	 * noise glitches larger than half travel — and holds the last value
+	 * instead. Sustained movement is accepted on the following report.
+	 * Absent or 0 = no filtering. Applied before stick-switch emulation,
+	 * so it tracks the physical axes.
+	 */
+	if (oshpb->max_step) {
+		lx = oshpb_axis_filter(&oshpb->ax_lx, lx, oshpb->max_step);
+		ly = oshpb_axis_filter(&oshpb->ax_ly, ly, oshpb->max_step);
+		rx = oshpb_axis_filter(&oshpb->ax_rx, rx, oshpb->max_step);
+		ry = oshpb_axis_filter(&oshpb->ax_ry, ry, oshpb->max_step);
+	}
+
 	/* buttons: 64 bits in bytes 1-8, mapped via DTS */
 	btns = (u64)data[1]       | ((u64)data[2] << 8)  |
 	       ((u64)data[3] << 16) | ((u64)data[4] << 24) |
@@ -313,13 +416,114 @@ static int oshpb_raw_event(struct hid_device *hdev, struct hid_report *report,
 
 	for (i = 0; i < oshpb->button_count; i++) {
 		int bit = oshpb->buttons[i].hid_bit;
-		input_report_key(input, oshpb->buttons[i].linux_code,
+
+		/* swap_ab/swap_xy remap */
+		input_report_key(input,
+				 oshpb_remap_button(oshpb, oshpb->buttons[i].linux_code),
 				 btns & BIT_ULL(bit));
 	}
 
 	input_sync(input);
 	return 0;
 }
+
+/* ---- Button swap sysfs (swap_ab / swap_xy) ---- */
+
+/*
+ * Attributes on the HID device:
+ *   /sys/bus/hid/devices/<id>/swap_ab [rw]
+ *   /sys/bus/hid/devices/<id>/swap_xy [rw]
+ *
+ * Button swap: 0 = report as-is (default), 1 = swap.
+ *   swap_ab: A<->B (BTN_EAST <-> BTN_SOUTH)
+ *   swap_xy: X<->Y (BTN_WEST <-> BTN_NORTH)
+ * Only 0/1 accepted, other input returns -EINVAL.
+ */
+static ssize_t oshpb_show_swap_ab(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct oshpb_device *oshpb = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", oshpb->swap_ab);
+}
+
+static ssize_t oshpb_show_swap_xy(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct oshpb_device *oshpb = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", oshpb->swap_xy);
+}
+
+/*
+ * On any swap change force-release the four face buttons so a held key
+ * cannot stay pressed under its old code. Returns 0 on success, negative
+ * error code on failure.
+ */
+static int oshpb_store_swap(struct oshpb_device *oshpb, int *field,
+			    const char *buf)
+{
+	unsigned int enable;
+	int error;
+
+	error = kstrtouint(buf, 10, &enable);
+	if (error)
+		return error;
+	if (enable > 1)
+		return -EINVAL;
+
+	mutex_lock(&oshpb->swap_lock);
+	if (enable != READ_ONCE(*field)) {
+		WRITE_ONCE(*field, enable);
+		if (oshpb->input) {
+			input_report_key(oshpb->input, BTN_EAST, 0);
+			input_report_key(oshpb->input, BTN_SOUTH, 0);
+			input_report_key(oshpb->input, BTN_WEST, 0);
+			input_report_key(oshpb->input, BTN_NORTH, 0);
+			input_sync(oshpb->input);
+		}
+	}
+	mutex_unlock(&oshpb->swap_lock);
+
+	return 0;
+}
+
+static ssize_t oshpb_store_swap_ab(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct oshpb_device *oshpb = dev_get_drvdata(dev);
+	int error;
+
+	error = oshpb_store_swap(oshpb, &oshpb->swap_ab, buf);
+	return error ? error : count;
+}
+
+static ssize_t oshpb_store_swap_xy(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct oshpb_device *oshpb = dev_get_drvdata(dev);
+	int error;
+
+	error = oshpb_store_swap(oshpb, &oshpb->swap_xy, buf);
+	return error ? error : count;
+}
+
+static DEVICE_ATTR(swap_ab, S_IWUSR | S_IRUGO,
+		   oshpb_show_swap_ab, oshpb_store_swap_ab);
+static DEVICE_ATTR(swap_xy, S_IWUSR | S_IRUGO,
+		   oshpb_show_swap_xy, oshpb_store_swap_xy);
+
+static struct attribute *oshpb_attrs[] = {
+	&dev_attr_swap_ab.attr,
+	&dev_attr_swap_xy.attr,
+	NULL,
+};
+
+static const struct attribute_group oshpb_attr_group = {
+	.attrs = oshpb_attrs,
+};
 
 /* ---- probe / remove ---- */
 
@@ -343,6 +547,7 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	oshpb->hdev = hdev;
 	hid_set_drvdata(hdev, oshpb);
+	mutex_init(&oshpb->swap_lock);
 
 	error = hid_parse(hdev);
 	if (error) {
@@ -367,6 +572,16 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (error) {
 		hid_err(hdev, "hw open failed: %d\n", error);
 		of_node_put(joypad_np);
+		hid_hw_stop(hdev);
+		return error;
+	}
+
+	/* button swap sysfs (swap_ab / swap_xy) */
+	error = sysfs_create_group(&hdev->dev.kobj, &oshpb_attr_group);
+	if (error) {
+		hid_err(hdev, "sysfs group create failed: %d\n", error);
+		of_node_put(joypad_np);
+		hid_hw_close(hdev);
 		hid_hw_stop(hdev);
 		return error;
 	}
@@ -416,7 +631,7 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	idx = 0;
 	if (joypad_np) {
 		for_each_child_of_node(joypad_np, child) {
-			u32 hid_bit, linux_code;
+			u32 hid_bit, linux_code, swapped;
 
 			if (of_property_read_u32(child, "hid-bit", &hid_bit))
 				continue;
@@ -428,6 +643,14 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			oshpb->buttons[idx].hid_bit = hid_bit;
 			oshpb->buttons[idx].linux_code = linux_code;
 			input_set_capability(input, EV_KEY, linux_code);
+			/* swapped codes too (swap_ab/swap_xy), else the input
+			 * core drops swapped reports */
+			swapped = oshpb_swap_ab_code(linux_code);
+			if (swapped != linux_code)
+				input_set_capability(input, EV_KEY, swapped);
+			swapped = oshpb_swap_xy_code(linux_code);
+			if (swapped != linux_code)
+				input_set_capability(input, EV_KEY, swapped);
 
 			/* track L3/R3 for stick-switch emulation */
 			if (linux_code == BTN_TRIGGER_HAPPY3)
@@ -513,6 +736,14 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			oshpb->deadzone = val;
 		if (!of_property_read_u32(joypad_np, "button-adc-scale", &val))
 			oshpb->scale = val;
+		/*
+		 * Spike filter threshold (optional): single samples jumping
+		 * more than this many output units from both the last reported
+		 * value and the previous sample are dropped as noise.
+		 * Absent = 0 = no filtering.
+		 */
+		if (!of_property_read_u32(joypad_np, "button-adc-max-step", &val))
+			oshpb->max_step = val;
 	}
 
 	of_node_put(joypad_np);
@@ -532,6 +763,7 @@ static int oshpb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 err_close:
 	of_node_put(joypad_np);
+	sysfs_remove_group(&hdev->dev.kobj, &oshpb_attr_group);
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
 	return error;
@@ -541,6 +773,7 @@ static void oshpb_remove(struct hid_device *hdev)
 {
 	struct oshpb_device *oshpb = hid_get_drvdata(hdev);
 
+	sysfs_remove_group(&hdev->dev.kobj, &oshpb_attr_group);
 	cancel_work_sync(&oshpb->play_work);
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);

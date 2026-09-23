@@ -12,6 +12,8 @@
  *   - 组合键上报
  *   - 基于 PWM 或 GPIO 的振动马达
  *   - 通过 sysfs 运行时校准
+ *   - 可选的ADC毛刺滤波 (button-adc-max-step, 丢弃超过阈值的孤立跳变)
+ *   - 按键交换 sysfs (swap_ab/swap_xy: 分别交换A/B和X/Y, 0=原样上报)
  *
  * Copyright (c) 2026 Hardkernel Co.,LTD
  * Copyright (c) 2026 lcdyk
@@ -80,6 +82,8 @@
 struct bt_adc {
 	struct iio_channel *channel;	/* direct-adc: 每轴独立 IIO 通道 */
 	int value;			/* 上报值 (mV) */
+	int reported;			/* 上次上报值 (毛刺滤波后, 反转前) */
+	int prev;			/* 上一个采样值 (含丢弃的毛刺) */
 #if JOYPAD_DEBUG_TUNING
 	int raw;			/* 校准前的原始 ADC 值 */
 #endif
@@ -148,9 +152,13 @@ struct joypad {
 
 	int auto_repeat;		/* 按键自动重复 */
 
+	int swap_ab;			/* 交换A/B: 0=原样, 1=BTN_EAST<->BTN_SOUTH */
+	int swap_xy;			/* 交换X/Y: 0=原样, 1=BTN_WEST<->BTN_NORTH */
+
 	int bt_adc_fuzz, bt_adc_flat;	/* 上报阈值 (mV) */
 	int bt_adc_scale;		/* ADC 读值缩放 */
 	int bt_adc_deadzone;		/* 摇杆死区控制 */
+	int bt_adc_max_step;		/* 毛刺判定阈值 (0 = 关闭滤波) */
 
 	struct mutex lock;
 
@@ -1038,11 +1046,142 @@ static DEVICE_ATTR(stick_switch_key, S_IWUSR | S_IRUGO,
 		   joypad_show_stick_switch_key,
 		   joypad_store_stick_switch_key);
 
+/*----------------------------------------------------------------------------*/
+/**
+ * joypad_swap_ab_code() - A/B交换: BTN_EAST <-> BTN_SOUTH.
+ * joypad_swap_xy_code() - X/Y交换: BTN_WEST <-> BTN_NORTH.
+ *
+ * 无关的键码原样返回. 用于上报重映射和capability注册.
+ */
+static int joypad_swap_ab_code(int code)
+{
+	switch (code) {
+	case BTN_EAST:	return BTN_SOUTH;
+	case BTN_SOUTH:	return BTN_EAST;
+	default:	return code;
+	}
+}
+
+static int joypad_swap_xy_code(int code)
+{
+	switch (code) {
+	case BTN_WEST:	return BTN_NORTH;
+	case BTN_NORTH:	return BTN_WEST;
+	default:	return code;
+	}
+}
+
+/**
+ * joypad_remap_button() - 按当前交换设置(swap_ab/swap_xy)重映射按键码.
+ *
+ * poll线程无锁读取标志, 与sysfs写入端通过 READ_ONCE/WRITE_ONCE 配对.
+ */
+static int joypad_remap_button(struct joypad *joypad, int code)
+{
+	if (READ_ONCE(joypad->swap_ab))
+		code = joypad_swap_ab_code(code);
+	if (READ_ONCE(joypad->swap_xy))
+		code = joypad_swap_xy_code(code);
+	return code;
+}
+
+/*----------------------------------------------------------------------------*/
+/*
+ * 属性:
+ *
+ * /sys/devices/platform/odroidgo3_joypad/swap_ab [读写]
+ * /sys/devices/platform/odroidgo3_joypad/swap_xy [读写]
+ * 按键交换: 0 = 原样上报(默认), 1 = 交换.
+ *   swap_ab: A<->B (BTN_EAST <-> BTN_SOUTH)
+ *   swap_xy: X<->Y (BTN_WEST <-> BTN_NORTH)
+ * 仅接受 0/1, 非法输入返回 -EINVAL.
+ */
+/*----------------------------------------------------------------------------*/
+static ssize_t joypad_show_swap_ab(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	return sprintf(buf, "%d\n", joypad->swap_ab);
+}
+
+static ssize_t joypad_show_swap_xy(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+
+	return sprintf(buf, "%d\n", joypad->swap_xy);
+}
+
+/* 任一交换开关变化时, 强制释放四个功能键, 避免按住时切换导致按键卡住.
+ * 返回 0 成功, 负数错误码. */
+static int joypad_store_swap(struct joypad *joypad, int *field, const char *buf)
+{
+	unsigned int enable;
+	int error;
+
+	/* 严格解析并校验: 仅接受 0/1 */
+	error = kstrtouint(buf, 10, &enable);
+	if (error)
+		return error;
+	if (enable > 1)
+		return -EINVAL;
+
+	mutex_lock(&joypad->lock);
+	if (enable != READ_ONCE(*field)) {
+		WRITE_ONCE(*field, enable);
+		if (joypad->input) {
+			input_report_key(joypad->input, BTN_EAST, 0);
+			input_report_key(joypad->input, BTN_SOUTH, 0);
+			input_report_key(joypad->input, BTN_WEST, 0);
+			input_report_key(joypad->input, BTN_NORTH, 0);
+			input_sync(joypad->input);
+		}
+	}
+	mutex_unlock(&joypad->lock);
+
+	return 0;
+}
+
+static ssize_t joypad_store_swap_ab(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+	int error;
+
+	error = joypad_store_swap(joypad, &joypad->swap_ab, buf);
+	return error ? error : count;
+}
+
+static ssize_t joypad_store_swap_xy(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct joypad *joypad = platform_get_drvdata(pdev);
+	int error;
+
+	error = joypad_store_swap(joypad, &joypad->swap_xy, buf);
+	return error ? error : count;
+}
+
+/*----------------------------------------------------------------------------*/
+static DEVICE_ATTR(swap_ab, S_IWUSR | S_IRUGO,
+		   joypad_show_swap_ab, joypad_store_swap_ab);
+static DEVICE_ATTR(swap_xy, S_IWUSR | S_IRUGO,
+		   joypad_show_swap_xy, joypad_store_swap_xy);
+
 static struct attribute *joypad_attrs[] = {
 	&dev_attr_poll_interval.attr,
 	&dev_attr_adc_fuzz.attr,
 	&dev_attr_adc_flat.attr,
 	&dev_attr_adc_deadzone.attr,
+	&dev_attr_swap_ab.attr,
+	&dev_attr_swap_xy.attr,
 	&dev_attr_enable.attr,
 	&dev_attr_adc_cal.attr,
 	&dev_attr_amux_debug.attr,
@@ -1107,14 +1246,19 @@ static void joypad_adc_key_check(struct joypad *joypad,
 			linux_code = STICK_SWITCH_L3_CODE;
 	}
 
+	/* 按键交换设置(swap_ab/swap_xy)重映射 */
+	linux_code = joypad_remap_button(joypad, linux_code);
+
 	/* 报告主键 */
 	input_event(poll_dev->input,
 		gpio->report_type, linux_code, pressed ? 1 : 0);
 
 	/* 报告组合键 */
 	for (i = 0; i < gpio->combo_count; i++) {
+		int code = joypad_remap_button(joypad, gpio->combo_codes[i]);
+
 		input_event(poll_dev->input,
-			gpio->report_type, gpio->combo_codes[i], pressed ? 1 : 0);
+			gpio->report_type, code, pressed ? 1 : 0);
 	}
 
 	gpio->old_value = pressed;
@@ -1153,6 +1297,9 @@ static void joypad_gpio_key_check(struct joypad *joypad,
 				linux_code = STICK_SWITCH_L3_CODE;
 		}
 
+		/* 按键交换设置(swap_ab/swap_xy)重映射 */
+		linux_code = joypad_remap_button(joypad, linux_code);
+
 		input_event(poll_dev->input,
 			gpio->report_type, linux_code,
 			(value == gpio->active_level) ? 1 : 0);
@@ -1184,6 +1331,33 @@ static void joypad_gpio_check(struct input_polled_dev *poll_dev)
 		else
 			joypad_gpio_key_check(joypad, poll_dev, gpio);
 	}
+}
+
+/*----------------------------------------------------------------------------*/
+/**
+ * joypad_axis_filter() - 丢弃单次采样的大跳变(毛刺).
+ * @adc:      轴状态 (维护 reported/prev)
+ * @sample:   本次采样值 (输出值单位)
+ * @max_step: 单次轮询允许的最大变化量
+ *
+ * 与上次上报值和上一个采样值偏差都超过 max_step 的采样视为孤立毛刺,
+ * 直接丢弃并保持上次上报值; 下一次采样仍偏离上一采样不超过 max_step
+ * 的是真实移动, 立即放行, 摇杆仍可全速走完整个行程.
+ *
+ * 返回: 本次应上报的值
+ */
+static int joypad_axis_filter(struct bt_adc *adc, int sample, int max_step)
+{
+	int delta_rep = abs(sample - adc->reported);
+	int delta_prev = abs(sample - adc->prev);
+
+	adc->prev = sample;
+
+	if (delta_rep > max_step && delta_prev > max_step)
+		return adc->reported;	/* 毛刺: 丢弃, 保持上次上报值 */
+
+	adc->reported = sample;
+	return sample;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1254,6 +1428,20 @@ static void joypad_adc_report_pair(struct joypad *joypad,
 	/* 限制范围 */
 	adcx->value = CLAMP(adcx->value, adcx->min, adcx->max);
 	adcy->value = CLAMP(adcy->value, adcy->min, adcy->max);
+
+	/*
+	 * 毛刺滤波 (可选, DTS: button-adc-max-step, 输出值单位).
+	 * 丢弃同时偏离上次上报值和上一采样超过 max_step 的孤立大跳变
+	 * (如超过半行程的ADC干扰), 保持上次上报值; 持续偏离上一采样
+	 * 不超过 max_step 的是真实移动, 立即放行. 属性不存在时为0,
+	 * 保持原有直接上报行为.
+	 */
+	if (joypad->bt_adc_max_step) {
+		adcx->value = joypad_axis_filter(adcx, adcx->value,
+						joypad->bt_adc_max_step);
+		adcy->value = joypad_axis_filter(adcy, adcy->value,
+						joypad->bt_adc_max_step);
+	}
 
 	/* 处理摇杆切换 */
 	report_type_x = adcx->report_type;
@@ -1468,6 +1656,10 @@ static void joypad_open(struct input_polled_dev *poll_dev)
 		adcy->value = 0;
 		input_report_abs(poll_dev->input, adcx->report_type, 0);
 		input_report_abs(poll_dev->input, adcy->report_type, 0);
+		adcx->reported = 0;
+		adcy->reported = 0;
+		adcx->prev = 0;
+		adcy->prev = 0;
 
 		dev_dbg(joypad->dev, "%s: adc[%d] calibrated = %d, adc[%d] calibrated = %d\n",
 			__func__, nbtn, adcx->cal, nbtn + 1, adcy->cal);
@@ -2138,14 +2330,27 @@ static int joypad_input_setup(struct device *dev, struct joypad *joypad)
 	__set_bit(EV_KEY, input->evbit);
 	for(nbtn = 0; nbtn < joypad->bt_gpio_count; nbtn++) {
 		struct bt_gpio *gpio = &joypad->gpios[nbtn];
-		int i;
+		int i, swapped;
 
 		input_set_capability(input, gpio->report_type,
 				gpio->linux_code);
+		/* 注册交换后的键码(swap_ab/swap_xy), 否则交换上报会被input core丢弃 */
+		swapped = joypad_swap_ab_code(gpio->linux_code);
+		if (swapped != gpio->linux_code)
+			input_set_capability(input, gpio->report_type, swapped);
+		swapped = joypad_swap_xy_code(gpio->linux_code);
+		if (swapped != gpio->linux_code)
+			input_set_capability(input, gpio->report_type, swapped);
 		/* 注册组合键能力 */
 		for (i = 0; i < gpio->combo_count; i++) {
 			input_set_capability(input, gpio->report_type,
 					gpio->combo_codes[i]);
+			swapped = joypad_swap_ab_code(gpio->combo_codes[i]);
+			if (swapped != gpio->combo_codes[i])
+				input_set_capability(input, gpio->report_type, swapped);
+			swapped = joypad_swap_xy_code(gpio->combo_codes[i]);
+			if (swapped != gpio->combo_codes[i])
+				input_set_capability(input, gpio->report_type, swapped);
 		}
 	}
 
@@ -2197,7 +2402,14 @@ static void joypad_setup_value_check(struct device *dev, struct joypad *joypad)
 		device_property_read_u32(dev, "button-adc-deadzone",
 					&joypad->bt_adc_deadzone);
 
-
+	/*
+		毛刺滤波阈值(可选):
+		与上次上报值和上一采样偏差都超过该值的采样视为孤立毛刺
+		(如超过半行程的ADC干扰), 直接丢弃并保持上次上报值.
+		属性不存在时保持为0, 不做任何过滤.
+	*/
+	device_property_read_u32(dev, "button-adc-max-step",
+				&joypad->bt_adc_max_step);
 }
 
 /*----------------------------------------------------------------------------*/
