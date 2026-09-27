@@ -68,6 +68,7 @@
 		*/
 		button-adc-fuzz = <32>;
 		button-adc-flat = <32>;
+		button-adc-max-step = <225>;
 		
 		abs_x-p-tuning = <200>;
 		abs_x-n-tuning = <200>;

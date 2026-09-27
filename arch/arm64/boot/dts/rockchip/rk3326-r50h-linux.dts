@@ -76,6 +76,7 @@
 		*/
 		button-adc-fuzz = <32>;
 		button-adc-flat = <32>;
+		button-adc-max-step = <225>;
 		
 		/*
 		Analog Stick data tuning value(precent)
