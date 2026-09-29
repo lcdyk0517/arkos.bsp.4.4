@@ -5,7 +5,8 @@ obj-$(CONFIG_RTL8188FU)	+= rtl8188fu/
 obj-$(CONFIG_RTL8189ES) += rtl8189es/
 obj-$(CONFIG_RTL8189FS) += rtl8189fs/
 obj-$(CONFIG_RTL8723BS) += rtl8723bs/
-obj-$(CONFIG_RTL8723BU) += rtl8723bu/
+# CONFIG_RTL8723BU builds ew-7611ulb/ (drivers/net/wireless/Makefile); this
+# copy also builds 8723bu.ko and collides with it in .tmp_versions/8723bu.mod.
 obj-$(CONFIG_RTL8723CS)	+= rtl8723cs/
 obj-$(CONFIG_RTL8723DS) += rtl8723ds/
 obj-$(CONFIG_RTL8723DU) += rtl8723du/
