@@ -1775,29 +1775,6 @@ static int dw_mci_data_complete(struct dw_mci *host, struct mmc_data *data)
 	return data->error;
 }
 
-/*
- * TXDR/RXDR ask for the FIFO to be serviced by the CPU. If there is no
- * transfer left to service - host->sg is NULL - the handler can only
- * clear the latch, the underlying FIFO condition persists, and the
- * level-triggered line is re-raised immediately. Mask the bit;
- * dw_mci_submit_data() re-enables it for the next PIO transfer.
- */
-static void dw_mci_mask_stuck_fifo_irq(struct dw_mci *host, u32 bit)
-{
-	unsigned long irqflags;
-	u32 int_mask;
-
-	spin_lock_irqsave(&host->irq_lock, irqflags);
-	int_mask = mci_readl(host, INTMASK);
-	if (int_mask & bit) {
-		mci_writel(host, INTMASK, int_mask & ~bit);
-		dev_err_ratelimited(host->dev,
-				    "FIFO irq %#x with no transfer to service; masking\n",
-				    bit);
-	}
-	spin_unlock_irqrestore(&host->irq_lock, irqflags);
-}
-
 static void dw_mci_set_drto(struct dw_mci *host)
 {
 	unsigned int drto_clks;
@@ -1975,13 +1952,10 @@ static void dw_mci_tasklet_func(unsigned long priv)
 						&host->pending_events)) {
 				/*
 				 * If all data-related interrupts don't come
-				 * within the given time. Armed for writes too:
-				 * the hardware data timeout does not cover the
-				 * write data phase, so a write to a card that
-				 * has stopped responding otherwise leaves
-				 * mmc_wait_for_req() waiting forever.
+				 * within the given time in reading data state.
 				 */
-				if (host->quirks & DW_MCI_QUIRK_BROKEN_DTO)
+				if ((host->quirks & DW_MCI_QUIRK_BROKEN_DTO) &&
+				    (host->dir_status == DW_MCI_RECV_STATUS))
 					dw_mci_set_drto(host);
 				if ((host->quirks & DW_MCI_QUIRK_BROKEN_XFER) &&
 				    host->dir_status == DW_MCI_RECV_STATUS)
@@ -2021,11 +1995,12 @@ static void dw_mci_tasklet_func(unsigned long priv)
 		case STATE_DATA_BUSY:
 			if (!dw_mci_clear_pending_data_complete(host)) {
 				/*
-				 * If a data error interrupt comes but data over
-				 * does not follow within the given time. Armed
-				 * for writes as well, for the reason above.
+				 * If data error interrupt comes but data over
+				 * interrupt doesn't come within the given time.
+				 * in reading data state.
 				 */
-				if (host->quirks & DW_MCI_QUIRK_BROKEN_DTO)
+				if ((host->quirks & DW_MCI_QUIRK_BROKEN_DTO) &&
+				    (host->dir_status == DW_MCI_RECV_STATUS))
 					dw_mci_set_drto(host);
 				break;
 			}
@@ -2635,16 +2610,12 @@ static irqreturn_t dw_mci_interrupt(int irq, void *dev_id)
 			mci_writel(host, RINTSTS, SDMMC_INT_RXDR);
 			if (host->dir_status == DW_MCI_RECV_STATUS && host->sg)
 				dw_mci_read_data_pio(host, false);
-			else
-				dw_mci_mask_stuck_fifo_irq(host, SDMMC_INT_RXDR);
 		}
 
 		if (pending & SDMMC_INT_TXDR) {
 			mci_writel(host, RINTSTS, SDMMC_INT_TXDR);
 			if (host->dir_status == DW_MCI_SEND_STATUS && host->sg)
 				dw_mci_write_data_pio(host);
-			else
-				dw_mci_mask_stuck_fifo_irq(host, SDMMC_INT_TXDR);
 		}
 
 		if (pending & SDMMC_INT_CMD_DONE) {

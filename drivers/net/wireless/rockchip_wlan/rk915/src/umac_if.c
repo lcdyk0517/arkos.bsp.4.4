@@ -568,15 +568,11 @@ void rk915_signal_io_error(int reason)
 	if (hpriv->shutdown || hpriv->during_fw_download)
 		return;
 	hpriv->fw_error = 1;
-	/*
-	 * The rx and tx paths both signal io errors, and a plain
-	 * test-then-set lets both through. Claim the recovery
-	 * atomically so exactly one runs.
-	 */
-	if (cmpxchg(&hpriv->fw_error_processing, 0, 1) == 0) {
+	if (!hpriv->fw_error_processing) {
 		if (!wake_lock_active(&hpriv->fw_err_lock))
 			wake_lock(&hpriv->fw_err_lock);
-
+		
+		hpriv->fw_error_processing = 1;
 		hpriv->fw_error_counter++;
 		hpriv->fw_error_reason = reason;
 

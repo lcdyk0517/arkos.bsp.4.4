@@ -2934,25 +2934,21 @@ int rpu_msg_handler(void *nbuff)
 		struct ieee80211_vif *vif = NULL;
 		int i = 0;
 
-		/* any reason code means the link is gone: deauth and
-		 * auth/assoc failures also arrive on this event, and
-		 * dropping them leaves mac80211 on a dead link
-		 */
-		RPU_INFO_IF("disconnected, reason %d\n", dis->reason_code);
-		if (!wake_lock_active(&hpriv->fw_err_lock))
-			wake_lock_timeout(&hpriv->fw_err_lock, msecs_to_jiffies(3*1000));
-		for (i = 0; i < MAX_VIFS; i++) {
-			if (!(priv->active_vifs & (1 << i)))
-				continue;
+		if (dis->reason_code == REASON_NW_LOST) {
+			RPU_INFO_IF("connection lost\n");
+			if (!wake_lock_active(&hpriv->fw_err_lock))
+				wake_lock_timeout(&hpriv->fw_err_lock, msecs_to_jiffies(3*1000));
+			for (i = 0; i < MAX_VIFS; i++) {
+				if (!(priv->active_vifs & (1 << i)))
+					continue;
 
-			vif = rcu_dereference(priv->vifs[i]);
-			if (!vif)
-				continue;
+				vif = rcu_dereference(priv->vifs[i]);
 
-			if (ether_addr_equal(vif->addr,
-					     dis->mac_addr)) {
-				ieee80211_connection_loss(vif);
-				break;
+				if (ether_addr_equal(vif->addr,
+						     dis->mac_addr)) {
+					ieee80211_connection_loss(vif);
+					break;
+				}
 			}
 		}
 	} else if (event == RPU_EVENT_MAC_STATS) {

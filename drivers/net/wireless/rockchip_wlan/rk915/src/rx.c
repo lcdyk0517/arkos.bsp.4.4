@@ -745,18 +745,11 @@ void rpu_rx_frame(struct sk_buff *skb, void *context)
 
 	memset(&rx_status, 0, sizeof(struct ieee80211_rx_status));
 
-	/* Remove this once hardware supports bip(11w) is available.
-	 * Only flag decrypted if it arrived protected: else plaintext
-	 * passes mac80211's unencrypted drop check. The chip keeps the
-	 * protected bit and IV, so mac80211 still de-IVs. Robust mgmt
-	 * is excluded, BIP is done in software.
-	 */
+	/* Remove this once hardware supports bip(11w) is available*/
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-	if (ieee80211_has_protected(hdr->frame_control) &&
-	    !ieee80211_is_robust_mgmt_frame(skb))
+	if (!ieee80211_is_robust_mgmt_frame(skb))
 #else
-	if (ieee80211_has_protected(hdr->frame_control) &&
-	    !ieee80211_is_robust_mgmt_frame(hdr))
+	if (!ieee80211_is_robust_mgmt_frame(hdr))
 #endif
 		rx_status.flag |= RX_FLAG_DECRYPTED;
 
