@@ -121,6 +121,28 @@
 	};
 };
 
+&pinctrl {
+	sdio {
+		/*
+		 * Card detect of the second SD slot. The card's switch grounds
+		 * the line; without a pull-up these pads read "card present"
+		 * with the slot empty (GPIO0_A2 resets to pull-down), so the
+		 * slot never sees a card being inserted or removed.
+		 */
+		sdio_det_gpio0_a2: sdio-det-gpio0-a2 {
+			rockchip,pins = <0 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		sdio_det_gpio3_b4: sdio-det-gpio3-b4 {
+			rockchip,pins = <3 RK_PB4 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		sdio_det_gpio3_b6: sdio-det-gpio3-b6 {
+			rockchip,pins = <3 RK_PB6 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+};
+
 &rng {
 	status = "okay";
 };

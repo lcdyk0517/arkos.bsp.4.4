@@ -811,6 +811,8 @@
 	card-detect-delay = <800>;
 	ignore-pm-notify;
 	cd-gpios = <&gpio3 RK_PB4 GPIO_ACTIVE_LOW>; /*[> CD GPIO <]*/
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdio_bus4 &sdio_cmd &sdio_clk &sdio_det_gpio3_b4>;
 	sd-uhs-sdr12;
 	sd-uhs-sdr25;
 	sd-uhs-sdr50;
