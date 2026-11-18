@@ -42,6 +42,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type1-panel4-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type1-panel5-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type1-panel5-invert-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type1-panel6-linux.dtb
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type1-panel7-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type2-panel1-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type2-panel1-rk809-linux.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3326-r36s-type2-panel1-with-amp-linux.dtb
