@@ -1,0 +1,12 @@
+config ZT9101
+	tristate "ZTopInc ZT9101 USB WiFi (350b:9101)"
+	depends on USB && CFG80211
+	help
+	  Driver for ZTopInc ZT9101 USB 802.11n WiFi adapters, including
+	  idVendor 0x350b idProduct 0x9101.
+
+	  Firmware and driver options are read from the file given by the
+	  cfg= module parameter, for example /etc/zt9101_wifi.cfg.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called zt9101_ztopmac_usb.
