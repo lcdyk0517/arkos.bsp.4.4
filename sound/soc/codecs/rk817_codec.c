@@ -128,6 +128,12 @@ struct rk817_codec_priv {
 
 	/* 动态音量最小值配置（单位：0.01dB），最大值固定为-6.75dB */
 	int volume_min_db;
+
+	int user_vol;
+	/* True when the DAC is at its minimum register (effective volume 0) */
+	bool vol_at_floor;
+	/* Previous floor state; the amplifier is only re-enabled on the edge */
+	bool last_vol_at_floor;
 };
 
 #ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
@@ -138,6 +144,75 @@ struct rk817_codec_priv {
  * 用户0% -> 寄存器vol_max_reg(最安静)
  * 用户100% -> 寄存器RK817_VOL_MAX_REG(-6.75dB，最大允许输出)
  */
+
+/*
+ * Re-apply the volume registers and mute state from the last user
+ * volume. At volume 0 the DAC hardware mute bit (DACMT) is also set
+ * and the external amplifier(s) are disabled, so the output is truly
+ * silent (no amplifier hiss).
+ */
+static void rk817_codec_amp_mute(struct snd_soc_codec *codec, int mute)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
+
+	if (mute) {
+		if (rk817->spk_ctl_gpio)
+			gpiod_set_value(rk817->spk_ctl_gpio, 0);
+		if (rk817->hp_ctl_gpio)
+			gpiod_set_value(rk817->hp_ctl_gpio, 0);
+	} else {
+		switch (rk817->playback_path) {
+		case SPK_PATH:
+			if (rk817->spk_ctl_gpio)
+				gpiod_set_value(rk817->spk_ctl_gpio, 1);
+			break;
+		case HP_PATH:
+			if (rk817->hp_ctl_gpio)
+				gpiod_set_value(rk817->hp_ctl_gpio, 1);
+			break;
+		case SPK_HP:
+			if (rk817->spk_ctl_gpio)
+				gpiod_set_value(rk817->spk_ctl_gpio, 1);
+			if (rk817->hp_ctl_gpio)
+				gpiod_set_value(rk817->hp_ctl_gpio, 1);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+static void rk817_codec_apply_volume(struct snd_soc_codec *codec)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
+	int vol_max_reg, reg_val, reg_range;
+
+	vol_max_reg = (-rk817->volume_min_db * 8) / (3 * 100);
+	vol_max_reg = clamp(vol_max_reg, RK817_VOL_MAX_REG + 1, 255);
+
+	reg_range = vol_max_reg - RK817_VOL_MAX_REG;
+	reg_val = vol_max_reg - (rk817->user_vol * reg_range) / 255;
+	reg_val = clamp(reg_val, RK817_VOL_MAX_REG, vol_max_reg);
+
+	snd_soc_write(codec, RK817_CODEC_DDAC_VOLL, reg_val);
+	snd_soc_write(codec, RK817_CODEC_DDAC_VOLR, reg_val);
+
+	rk817->vol_at_floor = (reg_val == vol_max_reg);
+
+	if (rk817->vol_at_floor) {
+		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+				    DACMT_ENABLE, DACMT_ENABLE);
+		rk817_codec_amp_mute(codec, 1);
+	} else {
+		if (rk817->last_vol_at_floor)
+			rk817_codec_amp_mute(codec, 0);
+		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+				    DACMT_ENABLE, DACMT_DISABLE);
+	}
+
+	rk817->last_vol_at_floor = rk817->vol_at_floor;
+}
+
 static int rk817_vol_get(struct snd_kcontrol *kcontrol,
 			 struct snd_ctl_elem_value *ucontrol)
 {
@@ -167,20 +242,9 @@ static int rk817_vol_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
-	int user_val = ucontrol->value.integer.value[0];
-	int vol_max_reg, reg_val, reg_range;
 
-	/* 计算寄存器最大值 */
-	vol_max_reg = (-rk817->volume_min_db * 8) / (3 * 100);
-	vol_max_reg = clamp(vol_max_reg, RK817_VOL_MAX_REG + 1, 255);
-
-	/* 用户空间值 -> 寄存器值，限制在 [RK817_VOL_MAX_REG, vol_max_reg] */
-	reg_range = vol_max_reg - RK817_VOL_MAX_REG;
-	reg_val = vol_max_reg - (user_val * reg_range) / 255;
-	reg_val = clamp(reg_val, RK817_VOL_MAX_REG, vol_max_reg);
-
-	snd_soc_write(codec, RK817_CODEC_DDAC_VOLL, reg_val);
-	snd_soc_write(codec, RK817_CODEC_DDAC_VOLR, reg_val);
+	rk817->user_vol = ucontrol->value.integer.value[0];
+	rk817_codec_apply_volume(codec);
 	return 1;
 }
 #endif
@@ -805,6 +869,11 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 		break;
 	}
 
+#ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
+	/* A path switch resets the volume/mute registers; re-apply the user state */
+	rk817_codec_apply_volume(codec);
+#endif
+
 	return 0;
 }
 
@@ -1056,6 +1125,15 @@ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute)
 
 	DBG("%s %d, playback_path %ld\n", __func__, mute, rk817->playback_path);
 	
+#ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
+	/* Keep the DAC muted at minimum volume; stream start/stop must not unmute it */
+	if (rk817->vol_at_floor) {
+		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+				    DACMT_ENABLE, DACMT_ENABLE);
+		return 0;
+	}
+#endif
+
 	if (mute)
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
 				    DACMT_ENABLE, DACMT_ENABLE);
@@ -1252,6 +1330,11 @@ static int rk817_resume(struct snd_soc_codec *codec)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
+	/* Resume power-up resets the volume/mute registers; restore user state */
+	rk817_codec_apply_volume(codec);
+#endif
+
 	return 0;
 }
 
@@ -1291,6 +1374,10 @@ static int rk817_probe(struct snd_soc_codec *codec)
 	rk817_vol_tlv[2] = rk817->volume_min_db;
 	dev_info(codec->dev, "%s: volume range %d dB to -6 dB\n",
 		 __func__, rk817->volume_min_db / 100);
+
+	rk817->user_vol = 0;
+	rk817->vol_at_floor = true;
+	rk817->last_vol_at_floor = true;
 #endif
 
 	snd_soc_add_codec_controls(codec, rk817_snd_path_controls,
