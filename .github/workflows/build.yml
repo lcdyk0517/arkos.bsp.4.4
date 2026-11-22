@@ -5,6 +5,7 @@ on:
     branches: [rg351]
   pull_request:
     branches: [rg351]
+  workflow_dispatch:
 
 jobs:
   build:
