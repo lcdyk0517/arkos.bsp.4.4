@@ -110,6 +110,11 @@
 #define RK817_I2S_MODE_SLV		(0x0 << 0)
 
 /* RK817_CODEC_DDAC_MUTE_MIXCTL */
+#define DAC_D_HPF_EN			(0x1 << 7)
+#define DAC_D_HPF_CF_MASK		(0x3 << 5)
+#define DAC_D_HPF_CF_80HZ		(0x0 << 5)
+#define CLASS_D_MODE			(0x1 << 4)
+#define CLASSD_MODE_L_SEL		(0x1 << 3)
 #define DACMT_ENABLE			(0x1 << 0)
 #define DACMT_DISABLE			(0x0 << 0)
 
