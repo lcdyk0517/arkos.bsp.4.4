@@ -128,7 +128,78 @@ struct rk817_codec_priv {
 
 	/* 动态音量最小值配置（单位：0.01dB），最大值固定为-6.75dB */
 	int volume_min_db;
+
+	/* A playback stream has unmuted the DAC */
+	bool dac_stream_on;
 };
+
+/*
+ * DAC filter and routing bits of DDAC_MUTE_MIXCTL. Path changes set these
+ * with update_bits so they never touch DACMT: only the stream mute
+ * (rk817_digital_mute) unmutes the DAC.
+ */
+#define RK817_DAC_MIXCTL_MASK \
+	(DAC_D_HPF_EN | DAC_D_HPF_CF_MASK | CLASS_D_MODE | CLASSD_MODE_L_SEL)
+/*
+ * The speaker paths keep the DAC high-pass filter on, at its lowest corner
+ * (80 Hz), so DC in the samples never reaches the speaker. Headphone-only
+ * paths turn it off and keep the full low end.
+ */
+#define RK817_DAC_HPF_MASK (DAC_D_HPF_EN | DAC_D_HPF_CF_MASK)
+#define RK817_DAC_HPF_SPK (DAC_D_HPF_EN | DAC_D_HPF_CF_80HZ)
+#define RK817_DAC_MIXCTL_SPK (RK817_DAC_HPF_SPK | CLASS_D_MODE)
+
+/* ACLASSD_CFG1: on is 0xa5 (enabled, unmuted); off is the reset value 0x69 */
+#define RK817_CLASSD_CFG1_ON 0xa5
+#define RK817_CLASSD_CFG1_OFF 0x69
+/* ACLASSD_CFG2 on enable: restart, OCPP/N limits at 1 A */
+#define RK817_CLASSD_CFG2_ON 0xc4
+
+/* The speaker path drives the internal class D */
+static bool rk817_path_uses_classd(struct rk817_codec_priv *rk817)
+{
+	switch (rk817->playback_path) {
+	case SPK_PATH:
+	case SPK_HP:
+#ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
+	case RCV:
+	case RING_SPK:
+	case RING_SPK_HP:
+#endif
+		return !rk817->use_ext_amplifier;
+	default:
+		return false;
+	}
+}
+
+/*
+ * The class D runs only while a playback stream is unmuted. With a speaker
+ * path selected but nothing playing (from boot until the first stream), it
+ * would amplify an idle DAC.
+ */
+static void rk817_classd_on(struct snd_soc_codec *codec)
+{
+	snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, RK817_CLASSD_CFG1_ON);
+	snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG2, RK817_CLASSD_CFG2_ON);
+}
+
+static void rk817_classd_off(struct snd_soc_codec *codec)
+{
+	snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, RK817_CLASSD_CFG1_OFF);
+}
+
+/* Speaker paths with the internal class D: mode, DC filter, gated enable */
+static void rk817_classd_path(struct snd_soc_codec *codec)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
+
+	snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+			    RK817_DAC_MIXCTL_MASK, RK817_DAC_MIXCTL_SPK);
+	if (rk817->dac_stream_on)
+		rk817_classd_on(codec);
+	else
+		rk817_classd_off(codec);
+}
 
 #ifdef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
 /*
@@ -367,6 +438,8 @@ static int rk817_reset(struct snd_soc_codec *codec)
 		snd_soc_write(codec, RK817_CODEC_APLL_CFG0, 0x04);
 		snd_soc_write(codec, RK817_CODEC_APLL_CFG4, 0xa5);
 	}
+	/* The soft reset leaves the DAC unmuted (0xa0); mute it until a stream */
+	snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL, DACMT_ENABLE);
 
 	return 0;
 }
@@ -390,7 +463,6 @@ static struct rk817_reg_val_typ playback_power_up_list[] = {
 	{RK817_CODEC_DI2S_RXCR1, 0x00},
 	{RK817_CODEC_DI2S_RXCMD_TSD, 0x20},
 	{RK817_CODEC_DTOP_VUCTIME, 0xf4},
-	{RK817_CODEC_DDAC_MUTE_MIXCTL, 0x00},
 
 	{RK817_CODEC_DDAC_VOLL, RK817_VOL_MAX_REG},
 	{RK817_CODEC_DDAC_VOLR, RK817_VOL_MAX_REG},
@@ -429,7 +501,6 @@ static struct rk817_reg_val_typ capture_power_up_list[] = {
 	{RK817_CODEC_DI2S_RXCMD_TSD, 0x20},
 	{RK817_CODEC_DTOP_VUCTIME, 0xf4},
 
-	{RK817_CODEC_DDAC_MUTE_MIXCTL, 0x00},
 	{RK817_CODEC_AADC_CFG0, 0x08},
 	{RK817_CODEC_AMIC_CFG0, 0x0f},
 	{RK817_CODEC_DI2S_TXCR3_TXCMD, 0x88},
@@ -507,6 +578,13 @@ static int rk817_codec_power_up(struct snd_soc_codec *codec, int type)
 			snd_soc_write(codec, playback_power_up_list[i].reg,
 				      playback_power_up_list[i].value);
 		}
+		/*
+		 * L/R mode, filter off; muted unless a stream is already
+		 * playing (it unmuted the DAC while the path was OFF).
+		 */
+		snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+			      rk817->dac_stream_on ? DACMT_DISABLE :
+						     DACMT_ENABLE);
 	}
 
 	if (type & RK817_CODEC_CAPTURE) {
@@ -693,12 +771,8 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 			snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_ON | PWD_DACD_ON |
 				      PWD_DACL_ON | PWD_DACR_ON);
-			/* CLASS D mode */
-			snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL, 0x10);
-			/* CLASS D enable */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, 0xa5);
-			/* restart CLASS D, OCPP/N */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG2, 0xc4);
+			/* CLASS D mode, DC filter, on only while a stream plays */
+			rk817_classd_path(codec);
 		} else {
 			/* HP_CP_EN , CP 2.3V */
 			snd_soc_write(codec, RK817_CODEC_AHP_CP, 0x11);
@@ -708,8 +782,10 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 			snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 					  PWD_DACBIAS_ON | PWD_DACD_DOWN |
 					  PWD_DACL_ON | PWD_DACR_ON);
+			/* External amplifier on the HP outputs: DC filter */
 			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-						DACMT_ENABLE, DACMT_DISABLE);
+					    RK817_DAC_HPF_MASK,
+					    RK817_DAC_HPF_SPK);
 		}
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
 		snd_soc_write(codec, RK817_CODEC_DDAC_VOLL, rk817->spk_volume);
@@ -733,8 +809,10 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 		snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 			      PWD_DACBIAS_ON | PWD_DACD_DOWN |
 			      PWD_DACL_ON | PWD_DACR_ON);
+		/* Headphones only: speaker off, full low end, filter off */
+		rk817_classd_off(codec);
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-				    DACMT_ENABLE, DACMT_DISABLE);
+				    RK817_DAC_HPF_MASK, 0);
 
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
 		snd_soc_write(codec, RK817_CODEC_DDAC_VOLL, rk817->hp_volume);
@@ -762,12 +840,13 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 			      PWD_DACL_ON | PWD_DACR_ON);
 
 		if (!rk817->use_ext_amplifier) {
-			/* CLASS D mode */
-			snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL, 0x10);
-			/* CLASS D enable */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, 0xa5);
-			/* restart CLASS D, OCPP/N */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG2, 0xc4);
+			/* CLASS D mode, DC filter, on only while a stream plays */
+			rk817_classd_path(codec);
+		} else {
+			/* External amplifier on the HP outputs: DC filter */
+			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+					    RK817_DAC_HPF_MASK,
+					    RK817_DAC_HPF_SPK);
 		}
 
 #ifndef CONFIG_ARCH_ROCKCHIP_ODROIDGOA
@@ -778,6 +857,13 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 	default:
 		return -EINVAL;
 	}
+
+	/*
+	 * External amplifier pins only while a stream plays; otherwise
+	 * rk817_digital_mute() sets them when the next stream starts.
+	 */
+	if (!rk817->dac_stream_on)
+		return 0;
 
 	//根据新路径设置GPIO状态
 	switch (rk817->playback_path) {
@@ -960,6 +1046,7 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 	unsigned int rate = params_rate(params);
 	unsigned char apll_cfg3_val;
 	unsigned char dtop_digen_sr_lmt0;
+	unsigned int dac_mute;
 
 	DBG("%s : MCLK = %dHz, sample rate = %dHz\n",
 	    __func__, rk817->stereo_sysclk, rate);
@@ -1019,6 +1106,8 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 				    DACSRT_MASK, dtop_digen_sr_lmt0);
 
 		/* 重启前先静音，防止 DACBIAS 断开产生 pop 噪声 */
+		dac_mute = snd_soc_read(codec, RK817_CODEC_DDAC_MUTE_MIXCTL) &
+			   DACMT_ENABLE;
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
 				    DACMT_ENABLE, DACMT_ENABLE);
 
@@ -1027,9 +1116,9 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 		else
 			rk817_restart_adc_digital_clk_and_apll(codec);
 
-		/* 重启后恢复静音状态 */
+		/* Restore the previous mute state; only a stream unmutes */
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-				    DACMT_ENABLE, DACMT_DISABLE);
+				    DACMT_ENABLE, dac_mute);
 	}
 
 	switch (params_format(params)) {
@@ -1055,7 +1144,13 @@ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute)
 	struct rk817_codec_priv *rk817 = snd_soc_codec_get_drvdata(codec);
 
 	DBG("%s %d, playback_path %ld\n", __func__, mute, rk817->playback_path);
-	
+
+	rk817->dac_stream_on = !mute;
+
+	/* Speaker class D off before the DAC mutes */
+	if (mute && rk817_path_uses_classd(rk817))
+		rk817_classd_off(codec);
+
 	if (mute)
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
 				    DACMT_ENABLE, DACMT_ENABLE);
@@ -1099,6 +1194,9 @@ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute)
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
 			break;
 		}
+		/* Speaker class D on after the DAC is unmuted */
+		if (rk817_path_uses_classd(rk817))
+			rk817_classd_on(codec);
 	}
 
 	return 0;
@@ -1197,12 +1295,8 @@ static int rk817_resume(struct snd_soc_codec *codec)
 			snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_ON | PWD_DACD_ON |
 				      PWD_DACL_ON | PWD_DACR_ON);
-			/* CLASS D mode */
-			snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL, 0x10);
-			/* CLASS D enable */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, 0xa5);
-			/* restart CLASS D, OCPP/N */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG2, 0xc4);
+			/* CLASS D mode, DC filter, on only while a stream plays */
+			rk817_classd_path(codec);
 		} else {
 			/* HP_CP_EN , CP 2.3V */
 			snd_soc_write(codec, RK817_CODEC_AHP_CP, 0x11);
@@ -1212,8 +1306,10 @@ static int rk817_resume(struct snd_soc_codec *codec)
 			snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 					  PWD_DACBIAS_ON | PWD_DACD_DOWN |
 					  PWD_DACL_ON | PWD_DACR_ON);
+			/* External amplifier on the HP outputs: DC filter */
 			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-						DACMT_ENABLE, DACMT_DISABLE);
+					    RK817_DAC_HPF_MASK,
+					    RK817_DAC_HPF_SPK);
 		}
 		break;
 	case HP_PATH:
@@ -1225,8 +1321,10 @@ static int rk817_resume(struct snd_soc_codec *codec)
 		snd_soc_write(codec, RK817_CODEC_ADAC_CFG1,
 			      PWD_DACBIAS_ON | PWD_DACD_DOWN |
 			      PWD_DACL_ON | PWD_DACR_ON);
+		/* Headphones only: speaker off, full low end, filter off */
+		rk817_classd_off(codec);
 		snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
-				    DACMT_ENABLE, DACMT_DISABLE);
+				    RK817_DAC_HPF_MASK, 0);
 		break;
 	case SPK_HP:
 		/* HP_CP_EN , CP 2.3V  */
@@ -1240,12 +1338,13 @@ static int rk817_resume(struct snd_soc_codec *codec)
 			      PWD_DACL_ON | PWD_DACR_ON);
 
 		if (!rk817->use_ext_amplifier) {
-			/* CLASS D mode */
-			snd_soc_write(codec, RK817_CODEC_DDAC_MUTE_MIXCTL, 0x10);
-			/* CLASS D enable */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG1, 0xa5);
-			/* restart CLASS D, OCPP/N */
-			snd_soc_write(codec, RK817_CODEC_ACLASSD_CFG2, 0xc4);
+			/* CLASS D mode, DC filter, on only while a stream plays */
+			rk817_classd_path(codec);
+		} else {
+			/* External amplifier on the HP outputs: DC filter */
+			snd_soc_update_bits(codec, RK817_CODEC_DDAC_MUTE_MIXCTL,
+					    RK817_DAC_HPF_MASK,
+					    RK817_DAC_HPF_SPK);
 		}
 		break;
 	default:
